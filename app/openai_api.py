@@ -5,6 +5,7 @@ from pathlib import Path
 
 from openai import OpenAI
 
+from .debug_utils import debug_print, summarize_image
 from .prompts import SYSTEM_PROMPT, USER_PROMPT
 from .schemas import StoryPackage
 
@@ -36,6 +37,15 @@ def generate_story_package(
 ) -> tuple[StoryPackage, dict]:
     """Generate a structured story package from a normalized image."""
 
+    request_payload = {
+        "model": model,
+        "system_prompt": SYSTEM_PROMPT,
+        "user_prompt": USER_PROMPT,
+        "image": summarize_image(image_path),
+        "response_format": StoryPackage.model_json_schema(),
+    }
+    debug_print("OPENAI REQUEST", request_payload)
+
     response = client.responses.parse(
         model=model,
         input=[
@@ -64,4 +74,18 @@ def generate_story_package(
     if story_package is None:
         raise RuntimeError("The model response could not be parsed into StoryPackage.")
 
-    return story_package, response.model_dump(mode="json")
+    raw_response = response.model_dump(mode="json")
+
+    debug_print(
+        "OPENAI RESPONSE SUMMARY",
+        {
+            "response_id": raw_response.get("id"),
+            "model": raw_response.get("model"),
+            "usage": raw_response.get("usage"),
+            "status": raw_response.get("status"),
+        },
+    )
+    debug_print("PARSED STORY PACKAGE", story_package.model_dump(mode="json"))
+    debug_print("RAW OPENAI RESPONSE", raw_response)
+
+    return story_package, raw_response

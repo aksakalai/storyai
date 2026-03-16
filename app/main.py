@@ -1,8 +1,10 @@
 import os
 import threading
+import traceback
 
 import gradio as gr
 
+from .debug_utils import DEBUG_ENABLED, debug_print
 from .pipeline import DEFAULT_RUNS_DIR, run_story_package_pipeline
 
 
@@ -19,8 +21,24 @@ def generate_story(image_path: str):
         raise gr.Error("A run is already in progress. Please wait for it to finish.")
 
     try:
+        debug_print(
+            "GRADIO EVENT",
+            {
+                "input_image_path": image_path,
+            },
+        )
         result = run_story_package_pipeline(image_path)
         story = result["story_package"]
+        debug_print(
+            "GRADIO RESULT",
+            {
+                "title": story.title,
+                "run_dir": result["run_dir"],
+                "working_image": result["working_image"],
+                "story_package_path": result["story_package_path"],
+                "openai_response_path": result["openai_response_path"],
+            },
+        )
 
         return (
             result["working_image"],
@@ -36,6 +54,7 @@ def generate_story(image_path: str):
             f"Artifacts saved to {result['run_dir']}",
         )
     except Exception as exc:
+        traceback.print_exc()
         raise gr.Error(str(exc)) from exc
     finally:
         RUN_LOCK.release()
@@ -106,6 +125,7 @@ def launch_app() -> None:
     print("Starting StoryAI...", flush=True)
     print(f"Share link enabled: {should_share}", flush=True)
     print(f"Artifacts directory: {DEFAULT_RUNS_DIR.resolve()}", flush=True)
+    print(f"Terminal debug logging: {DEBUG_ENABLED}", flush=True)
 
     demo.queue(default_concurrency_limit=1)
     demo.launch(
