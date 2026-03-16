@@ -11,6 +11,7 @@ from .schemas import StoryPackage
 
 
 DEFAULT_STORY_MODEL = os.getenv("STORYAI_STORY_MODEL", "gpt-4o-mini")
+DEFAULT_IMAGE_DETAIL = os.getenv("STORYAI_IMAGE_DETAIL", "low")
 
 
 def build_client(api_key: str | None = None) -> OpenAI:
@@ -39,6 +40,7 @@ def generate_story_package(
 
     request_payload = {
         "model": model,
+        "image_detail": DEFAULT_IMAGE_DETAIL,
         "system_prompt": SYSTEM_PROMPT,
         "user_prompt": USER_PROMPT,
         "image": summarize_image(image_path),
@@ -63,6 +65,7 @@ def generate_story_package(
                     {
                         "type": "input_image",
                         "image_url": image_to_data_url(image_path),
+                        "detail": DEFAULT_IMAGE_DETAIL,
                     },
                 ],
             },
@@ -74,7 +77,7 @@ def generate_story_package(
     if story_package is None:
         raise RuntimeError("The model response could not be parsed into StoryPackage.")
 
-    raw_response = response.model_dump(mode="json")
+    raw_response = response.model_dump(mode="json", warnings=False)
 
     debug_print(
         "OPENAI RESPONSE SUMMARY",
