@@ -30,6 +30,7 @@ def generate_story(image_path: str):
         result = run_story_package_pipeline(image_path)
         story = result["story_package"]
         page_images = result["page_images"]
+        page_audio = result["page_audio"]
         debug_print(
             "GRADIO RESULT",
             {
@@ -39,6 +40,7 @@ def generate_story(image_path: str):
                 "story_package_path": result["story_package_path"],
                 "openai_response_path": result["openai_response_path"],
                 "page_image_manifest_path": result["page_image_manifest_path"],
+                "page_audio_manifest_path": result["page_audio_manifest_path"],
             },
         )
 
@@ -54,10 +56,13 @@ def generate_story(image_path: str):
             story.part_3.image_prompt,
             page_images[0]["image_path"],
             page_images[0]["final_prompt"],
+            page_audio[0]["audio_path"],
             page_images[1]["image_path"],
             page_images[1]["final_prompt"],
+            page_audio[1]["audio_path"],
             page_images[2]["image_path"],
             page_images[2]["final_prompt"],
+            page_audio[2]["audio_path"],
             story.model_dump(mode="json"),
             f"Artifacts saved to {result['run_dir']}",
         )
@@ -108,6 +113,7 @@ def build_demo() -> gr.Blocks:
                     label="Page 1 final image generation prompt",
                     lines=9,
                 )
+                page_1_audio = gr.Audio(label="Page 1 narration")
 
             with gr.Tab("Page 2"):
                 page_2_image = gr.Image(label="Page 2 image")
@@ -115,6 +121,7 @@ def build_demo() -> gr.Blocks:
                     label="Page 2 final image generation prompt",
                     lines=9,
                 )
+                page_2_audio = gr.Audio(label="Page 2 narration")
 
             with gr.Tab("Page 3"):
                 page_3_image = gr.Image(label="Page 3 image")
@@ -122,6 +129,7 @@ def build_demo() -> gr.Blocks:
                     label="Page 3 final image generation prompt",
                     lines=9,
                 )
+                page_3_audio = gr.Audio(label="Page 3 narration")
 
         generate_button.click(
             fn=generate_story,
@@ -138,10 +146,13 @@ def build_demo() -> gr.Blocks:
                 part_3_prompt,
                 page_1_image,
                 page_1_final_prompt,
+                page_1_audio,
                 page_2_image,
                 page_2_final_prompt,
+                page_2_audio,
                 page_3_image,
                 page_3_final_prompt,
+                page_3_audio,
                 story_json,
                 status_output,
             ],

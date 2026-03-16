@@ -1,5 +1,6 @@
 import json
 import os
+import wave
 from pathlib import Path
 from typing import Any
 
@@ -58,6 +59,28 @@ def summarize_image(path: str | Path) -> dict[str, Any]:
                     "mode": image.mode,
                     "width": image.width,
                     "height": image.height,
+                }
+            )
+    return summary
+
+
+def summarize_wav_audio(path: str | Path) -> dict[str, Any]:
+    """Return file and basic duration metadata for a WAV file."""
+
+    resolved = Path(path)
+    summary = summarize_path(resolved)
+    if resolved.exists() and resolved.suffix.lower() == ".wav":
+        with wave.open(str(resolved), "rb") as audio_file:
+            frame_count = audio_file.getnframes()
+            frame_rate = audio_file.getframerate()
+            duration_seconds = frame_count / frame_rate if frame_rate else 0.0
+            summary.update(
+                {
+                    "channels": audio_file.getnchannels(),
+                    "sample_width_bytes": audio_file.getsampwidth(),
+                    "frame_rate": frame_rate,
+                    "frame_count": frame_count,
+                    "duration_seconds": round(duration_seconds, 3),
                 }
             )
     return summary

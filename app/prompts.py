@@ -49,3 +49,10 @@ def build_page_image_prompt(visual_canon: str, page_prompt: str) -> str:
         visual_canon=visual_canon.strip(),
         page_prompt=page_prompt.strip(),
     )
+
+
+NARRATION_INSTRUCTIONS = """\
+Read like a warm, gentle bedtime storyteller.
+Use calm pacing, soft expression, and clear pronunciation.
+Keep the tone soothing and child-friendly.
+"""

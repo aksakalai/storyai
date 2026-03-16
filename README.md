@@ -2,16 +2,17 @@
 
 StoryAI is a Colab-first Gradio app for turning a single child drawing into a structured bedtime story package with OpenAI.
 
-The current scaffold implements the first two phases of the agreed workflow:
+The current scaffold implements the first three phases of the agreed workflow:
 
 - upload or capture one drawing
 - save the original image and a normalized working copy
 - make one OpenAI call for a structured `StoryPackage`
 - generate 3 page images from the story package
+- generate 3 narration audio clips from the story parts
 - save artifacts locally
-- show the story parts, generated images, and final image prompts in the Gradio UI
+- show the story parts, generated images, narration audio, and final image prompts in the Gradio UI
 
-The later phases for narration, timestamps, subtitle rendering, and final video assembly will build on top of this repo structure.
+The later phases for timestamps, subtitle rendering, and final video assembly will build on top of this repo structure.
 
 ## Colab
 
@@ -67,7 +68,11 @@ Each run currently writes:
 - `page_1.png`
 - `page_2.png`
 - `page_3.png`
+- `page_1_audio.wav`
+- `page_2_audio.wav`
+- `page_3_audio.wav`
 - `page_1_prompt.txt`
 - `page_2_prompt.txt`
 - `page_3_prompt.txt`
 - `page_images.json`
+- `page_audio.json`

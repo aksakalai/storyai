@@ -5,8 +5,13 @@ from pathlib import Path
 
 from openai import OpenAI
 
-from .debug_utils import debug_print, summarize_image, summarize_path
-from .prompts import SYSTEM_PROMPT, USER_PROMPT, build_page_image_prompt
+from .debug_utils import debug_print, summarize_image, summarize_path, summarize_wav_audio
+from .prompts import (
+    NARRATION_INSTRUCTIONS,
+    SYSTEM_PROMPT,
+    USER_PROMPT,
+    build_page_image_prompt,
+)
 from .schemas import StoryPackage
 
 
@@ -15,6 +20,9 @@ DEFAULT_IMAGE_DETAIL = os.getenv("STORYAI_IMAGE_DETAIL", "low")
 DEFAULT_PAGE_IMAGE_MODEL = os.getenv("STORYAI_PAGE_IMAGE_MODEL", "gpt-image-1-mini")
 DEFAULT_PAGE_IMAGE_SIZE = os.getenv("STORYAI_PAGE_IMAGE_SIZE", "1024x1024")
 DEFAULT_PAGE_IMAGE_QUALITY = os.getenv("STORYAI_PAGE_IMAGE_QUALITY", "low")
+DEFAULT_TTS_MODEL = os.getenv("STORYAI_TTS_MODEL", "gpt-4o-mini-tts")
+DEFAULT_TTS_VOICE = os.getenv("STORYAI_TTS_VOICE", "marin")
+DEFAULT_TTS_FORMAT = os.getenv("STORYAI_TTS_FORMAT", "wav")
 
 
 def build_client(api_key: str | None = None) -> OpenAI:
@@ -144,3 +152,45 @@ def generate_page_image(
     debug_print("IMAGE GENERATION RESPONSE", response_summary)
 
     return final_prompt, response_summary
+
+
+def synthesize_narration(
+    client: OpenAI,
+    text: str,
+    output_path: Path,
+    model: str = DEFAULT_TTS_MODEL,
+    voice: str = DEFAULT_TTS_VOICE,
+    response_format: str = DEFAULT_TTS_FORMAT,
+    instructions: str = NARRATION_INSTRUCTIONS,
+) -> dict:
+    """Generate one narration audio file and save it locally."""
+
+    request_payload = {
+        "model": model,
+        "voice": voice,
+        "response_format": response_format,
+        "output_path": str(output_path.resolve()),
+        "instructions": instructions.strip(),
+        "text": text,
+    }
+    debug_print("TTS REQUEST", request_payload)
+
+    with client.audio.speech.with_streaming_response.create(
+        model=model,
+        voice=voice,
+        input=text,
+        instructions=instructions,
+        response_format=response_format,
+    ) as response:
+        response.stream_to_file(output_path)
+
+    response_summary = {
+        "model": model,
+        "voice": voice,
+        "response_format": response_format,
+        "instructions": instructions.strip(),
+        "output_audio": summarize_wav_audio(output_path),
+    }
+    debug_print("TTS RESPONSE", response_summary)
+
+    return response_summary

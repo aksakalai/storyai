@@ -7,8 +7,18 @@ from uuid import uuid4
 
 from PIL import Image, ImageOps
 
-from .debug_utils import debug_print, mask_api_key, summarize_image, summarize_path
-from .openai_api import build_client, generate_page_image, generate_story_package
+from .debug_utils import (
+    debug_print,
+    mask_api_key,
+    summarize_image,
+    summarize_path,
+)
+from .openai_api import (
+    build_client,
+    generate_page_image,
+    generate_story_package,
+    synthesize_narration,
+)
 from .schemas import StoryPackage
 
 
@@ -63,13 +73,16 @@ def run_story_package_pipeline(image_path: str, api_key: str | None = None) -> d
     client = build_client(api_key=api_key)
     story_package, raw_response = generate_story_package(client, working_image_path)
     page_images = _generate_page_images(client, story_package, run_dir)
+    page_audio = _generate_page_audio(client, story_package, run_dir)
 
     story_package_path = run_dir / "story_package.json"
     openai_response_path = run_dir / "openai_response.json"
     page_image_manifest_path = run_dir / "page_images.json"
+    page_audio_manifest_path = run_dir / "page_audio.json"
     _write_json(story_package_path, story_package.model_dump(mode="json"))
     _write_json(openai_response_path, raw_response)
     _write_json(page_image_manifest_path, {"pages": page_images})
+    _write_json(page_audio_manifest_path, {"pages": page_audio})
 
     debug_print(
         "ARTIFACTS WRITTEN",
@@ -77,6 +90,7 @@ def run_story_package_pipeline(image_path: str, api_key: str | None = None) -> d
             "story_package_json": summarize_path(story_package_path),
             "openai_response_json": summarize_path(openai_response_path),
             "page_image_manifest_json": summarize_path(page_image_manifest_path),
+            "page_audio_manifest_json": summarize_path(page_audio_manifest_path),
         },
     )
 
@@ -87,7 +101,9 @@ def run_story_package_pipeline(image_path: str, api_key: str | None = None) -> d
         "openai_response_path": str(openai_response_path.resolve()),
         "story_package_path": str(story_package_path.resolve()),
         "page_image_manifest_path": str(page_image_manifest_path.resolve()),
+        "page_audio_manifest_path": str(page_audio_manifest_path.resolve()),
         "page_images": page_images,
+        "page_audio": page_audio,
         "story_package": story_package,
     }
 
@@ -135,3 +151,33 @@ def _generate_page_images(client, story_package: StoryPackage, run_dir: Path) ->
 
     debug_print("PAGE IMAGES", generated_pages)
     return generated_pages
+
+
+def _generate_page_audio(client, story_package: StoryPackage, run_dir: Path) -> list[dict]:
+    """Generate one narration clip per story part and save audio artifacts."""
+
+    pages = [
+        ("page_1", story_package.part_1),
+        ("page_2", story_package.part_2),
+        ("page_3", story_package.part_3),
+    ]
+    generated_audio: list[dict] = []
+
+    for page_name, story_part in pages:
+        output_path = run_dir / f"{page_name}_audio.wav"
+        response_summary = synthesize_narration(
+            client=client,
+            text=story_part.text,
+            output_path=output_path,
+        )
+        generated_audio.append(
+            {
+                "page": page_name,
+                "story_text": story_part.text,
+                "audio_path": str(output_path.resolve()),
+                "response": response_summary,
+            }
+        )
+
+    debug_print("PAGE AUDIO", generated_audio)
+    return generated_audio
