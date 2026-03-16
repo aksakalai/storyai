@@ -29,6 +29,7 @@ def generate_story(image_path: str):
         )
         result = run_story_package_pipeline(image_path)
         story = result["story_package"]
+        page_images = result["page_images"]
         debug_print(
             "GRADIO RESULT",
             {
@@ -37,6 +38,7 @@ def generate_story(image_path: str):
                 "working_image": result["working_image"],
                 "story_package_path": result["story_package_path"],
                 "openai_response_path": result["openai_response_path"],
+                "page_image_manifest_path": result["page_image_manifest_path"],
             },
         )
 
@@ -50,6 +52,12 @@ def generate_story(image_path: str):
             story.part_2.image_prompt,
             story.part_3.text,
             story.part_3.image_prompt,
+            page_images[0]["image_path"],
+            page_images[0]["final_prompt"],
+            page_images[1]["image_path"],
+            page_images[1]["final_prompt"],
+            page_images[2]["image_path"],
+            page_images[2]["final_prompt"],
             story.model_dump(mode="json"),
             f"Artifacts saved to {result['run_dir']}",
         )
@@ -61,13 +69,13 @@ def generate_story(image_path: str):
 
 
 def build_demo() -> gr.Blocks:
-    """Create the phase-one StoryAI Gradio interface."""
+    """Create the current StoryAI Gradio interface."""
 
     with gr.Blocks(title="StoryAI") as demo:
         gr.Markdown(
             """
             # StoryAI
-            Upload or capture one child drawing, then generate a structured three-part bedtime story package.
+            Upload or capture one child drawing, then generate a structured three-part bedtime story package and three page images.
             """
         )
 
@@ -79,7 +87,7 @@ def build_demo() -> gr.Blocks:
             )
             working_image = gr.Image(label="Normalized working image")
 
-        generate_button = gr.Button("Generate Story Package", variant="primary")
+        generate_button = gr.Button("Generate Story + Page Images", variant="primary")
         status_output = gr.Textbox(label="Run status")
 
         title_output = gr.Textbox(label="Title")
@@ -92,6 +100,28 @@ def build_demo() -> gr.Blocks:
         part_3_text = gr.Textbox(label="Part 3 text", lines=5)
         part_3_prompt = gr.Textbox(label="Part 3 image prompt", lines=4)
         story_json = gr.JSON(label="Story package JSON")
+
+        with gr.Tabs():
+            with gr.Tab("Page 1"):
+                page_1_image = gr.Image(label="Page 1 image")
+                page_1_final_prompt = gr.Textbox(
+                    label="Page 1 final image generation prompt",
+                    lines=9,
+                )
+
+            with gr.Tab("Page 2"):
+                page_2_image = gr.Image(label="Page 2 image")
+                page_2_final_prompt = gr.Textbox(
+                    label="Page 2 final image generation prompt",
+                    lines=9,
+                )
+
+            with gr.Tab("Page 3"):
+                page_3_image = gr.Image(label="Page 3 image")
+                page_3_final_prompt = gr.Textbox(
+                    label="Page 3 final image generation prompt",
+                    lines=9,
+                )
 
         generate_button.click(
             fn=generate_story,
@@ -106,6 +136,12 @@ def build_demo() -> gr.Blocks:
                 part_2_prompt,
                 part_3_text,
                 part_3_prompt,
+                page_1_image,
+                page_1_final_prompt,
+                page_2_image,
+                page_2_final_prompt,
+                page_3_image,
+                page_3_final_prompt,
                 story_json,
                 status_output,
             ],

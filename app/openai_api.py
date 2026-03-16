@@ -5,13 +5,16 @@ from pathlib import Path
 
 from openai import OpenAI
 
-from .debug_utils import debug_print, summarize_image
-from .prompts import SYSTEM_PROMPT, USER_PROMPT
+from .debug_utils import debug_print, summarize_image, summarize_path
+from .prompts import SYSTEM_PROMPT, USER_PROMPT, build_page_image_prompt
 from .schemas import StoryPackage
 
 
 DEFAULT_STORY_MODEL = os.getenv("STORYAI_STORY_MODEL", "gpt-4o-mini")
 DEFAULT_IMAGE_DETAIL = os.getenv("STORYAI_IMAGE_DETAIL", "low")
+DEFAULT_PAGE_IMAGE_MODEL = os.getenv("STORYAI_PAGE_IMAGE_MODEL", "gpt-image-1-mini")
+DEFAULT_PAGE_IMAGE_SIZE = os.getenv("STORYAI_PAGE_IMAGE_SIZE", "1024x1024")
+DEFAULT_PAGE_IMAGE_QUALITY = os.getenv("STORYAI_PAGE_IMAGE_QUALITY", "low")
 
 
 def build_client(api_key: str | None = None) -> OpenAI:
@@ -92,3 +95,52 @@ def generate_story_package(
     debug_print("RAW OPENAI RESPONSE", raw_response)
 
     return story_package, raw_response
+
+
+def generate_page_image(
+    client: OpenAI,
+    visual_canon: str,
+    page_prompt: str,
+    output_path: Path,
+    model: str = DEFAULT_PAGE_IMAGE_MODEL,
+    size: str = DEFAULT_PAGE_IMAGE_SIZE,
+    quality: str = DEFAULT_PAGE_IMAGE_QUALITY,
+) -> tuple[str, dict]:
+    """Generate one page image and save it locally."""
+
+    final_prompt = build_page_image_prompt(visual_canon, page_prompt)
+    request_payload = {
+        "model": model,
+        "size": size,
+        "quality": quality,
+        "output_path": str(output_path.resolve()),
+        "prompt": final_prompt,
+    }
+    debug_print("IMAGE GENERATION REQUEST", request_payload)
+
+    response = client.images.generate(
+        model=model,
+        prompt=final_prompt,
+        size=size,
+        quality=quality,
+    )
+
+    image_data = response.data[0]
+    image_base64 = getattr(image_data, "b64_json", None)
+    if not image_base64 and hasattr(image_data, "model_dump"):
+        image_base64 = image_data.model_dump().get("b64_json")
+    if not image_base64:
+        raise RuntimeError("Image generation response did not include base64 image data.")
+
+    output_path.write_bytes(base64.b64decode(image_base64))
+
+    response_summary = {
+        "created": getattr(response, "created", None),
+        "size": size,
+        "quality": quality,
+        "model": model,
+        "output_image": summarize_path(output_path),
+    }
+    debug_print("IMAGE GENERATION RESPONSE", response_summary)
+
+    return final_prompt, response_summary
