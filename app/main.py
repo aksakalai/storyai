@@ -31,6 +31,7 @@ def generate_story(image_path: str):
         story = result["story_package"]
         page_images = result["page_images"]
         page_audio = result["page_audio"]
+        page_timestamps = result["page_timestamps"]
         debug_print(
             "GRADIO RESULT",
             {
@@ -41,6 +42,7 @@ def generate_story(image_path: str):
                 "openai_response_path": result["openai_response_path"],
                 "page_image_manifest_path": result["page_image_manifest_path"],
                 "page_audio_manifest_path": result["page_audio_manifest_path"],
+                "page_timestamps_manifest_path": result["page_timestamps_manifest_path"],
             },
         )
 
@@ -57,12 +59,18 @@ def generate_story(image_path: str):
             page_images[0]["image_path"],
             page_images[0]["final_prompt"],
             page_audio[0]["audio_path"],
+            page_timestamps[0]["text"],
+            page_timestamps[0]["words"],
             page_images[1]["image_path"],
             page_images[1]["final_prompt"],
             page_audio[1]["audio_path"],
+            page_timestamps[1]["text"],
+            page_timestamps[1]["words"],
             page_images[2]["image_path"],
             page_images[2]["final_prompt"],
             page_audio[2]["audio_path"],
+            page_timestamps[2]["text"],
+            page_timestamps[2]["words"],
             story.model_dump(mode="json"),
             f"Artifacts saved to {result['run_dir']}",
         )
@@ -114,6 +122,8 @@ def build_demo() -> gr.Blocks:
                     lines=9,
                 )
                 page_1_audio = gr.Audio(label="Page 1 narration")
+                page_1_transcript = gr.Textbox(label="Page 1 transcript", lines=5)
+                page_1_words = gr.JSON(label="Page 1 word timestamps")
 
             with gr.Tab("Page 2"):
                 page_2_image = gr.Image(label="Page 2 image")
@@ -122,6 +132,8 @@ def build_demo() -> gr.Blocks:
                     lines=9,
                 )
                 page_2_audio = gr.Audio(label="Page 2 narration")
+                page_2_transcript = gr.Textbox(label="Page 2 transcript", lines=5)
+                page_2_words = gr.JSON(label="Page 2 word timestamps")
 
             with gr.Tab("Page 3"):
                 page_3_image = gr.Image(label="Page 3 image")
@@ -130,6 +142,8 @@ def build_demo() -> gr.Blocks:
                     lines=9,
                 )
                 page_3_audio = gr.Audio(label="Page 3 narration")
+                page_3_transcript = gr.Textbox(label="Page 3 transcript", lines=5)
+                page_3_words = gr.JSON(label="Page 3 word timestamps")
 
         generate_button.click(
             fn=generate_story,
@@ -147,12 +161,18 @@ def build_demo() -> gr.Blocks:
                 page_1_image,
                 page_1_final_prompt,
                 page_1_audio,
+                page_1_transcript,
+                page_1_words,
                 page_2_image,
                 page_2_final_prompt,
                 page_2_audio,
+                page_2_transcript,
+                page_2_words,
                 page_3_image,
                 page_3_final_prompt,
                 page_3_audio,
+                page_3_transcript,
+                page_3_words,
                 story_json,
                 status_output,
             ],

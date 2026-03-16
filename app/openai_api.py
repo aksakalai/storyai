@@ -1,4 +1,5 @@
 import base64
+import json
 import mimetypes
 import os
 from pathlib import Path
@@ -23,6 +24,11 @@ DEFAULT_PAGE_IMAGE_QUALITY = os.getenv("STORYAI_PAGE_IMAGE_QUALITY", "low")
 DEFAULT_TTS_MODEL = os.getenv("STORYAI_TTS_MODEL", "gpt-4o-mini-tts")
 DEFAULT_TTS_VOICE = os.getenv("STORYAI_TTS_VOICE", "marin")
 DEFAULT_TTS_FORMAT = os.getenv("STORYAI_TTS_FORMAT", "wav")
+DEFAULT_TRANSCRIPTION_MODEL = os.getenv("STORYAI_TRANSCRIPTION_MODEL", "whisper-1")
+DEFAULT_TRANSCRIPTION_RESPONSE_FORMAT = os.getenv(
+    "STORYAI_TRANSCRIPTION_RESPONSE_FORMAT",
+    "verbose_json",
+)
 
 
 def build_client(api_key: str | None = None) -> OpenAI:
@@ -194,3 +200,56 @@ def synthesize_narration(
     debug_print("TTS RESPONSE", response_summary)
 
     return response_summary
+
+
+def transcribe_audio_with_word_timestamps(
+    client: OpenAI,
+    audio_path: Path,
+    expected_text: str | None = None,
+    model: str = DEFAULT_TRANSCRIPTION_MODEL,
+    response_format: str = DEFAULT_TRANSCRIPTION_RESPONSE_FORMAT,
+) -> dict:
+    """Transcribe one audio clip with word-level timestamps."""
+
+    request_payload = {
+        "model": model,
+        "response_format": response_format,
+        "timestamp_granularities": ["word"],
+        "audio": summarize_wav_audio(audio_path),
+        "expected_text": expected_text,
+    }
+    debug_print("TRANSCRIPTION REQUEST", request_payload)
+
+    with open(audio_path, "rb") as audio_file:
+        response = client.audio.transcriptions.create(
+            file=audio_file,
+            model=model,
+            response_format=response_format,
+            timestamp_granularities=["word"],
+            prompt=expected_text,
+        )
+
+    raw_response = _to_jsonable(response)
+    debug_print(
+        "TRANSCRIPTION RESPONSE SUMMARY",
+        {
+            "model": model,
+            "response_format": response_format,
+            "text": raw_response.get("text"),
+            "word_count": len(raw_response.get("words", []) or []),
+            "segment_count": len(raw_response.get("segments", []) or []),
+        },
+    )
+    debug_print("RAW TRANSCRIPTION RESPONSE", raw_response)
+
+    return raw_response
+
+
+def _to_jsonable(value) -> dict:
+    """Convert SDK response objects into plain JSON-serializable dicts."""
+
+    if hasattr(value, "model_dump"):
+        return value.model_dump(mode="json", warnings=False)
+    if isinstance(value, dict):
+        return value
+    return json.loads(json.dumps(value, default=str))
