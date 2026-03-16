@@ -16,18 +16,19 @@ The later phases for page image generation, narration, timestamps, subtitle rend
 
 Run the whole app from one Colab cell:
 
-```bash
-%%bash
-set -e
+```python
+!rm -rf /content/storyai
+!git clone https://github.com/aksakalai/storyai.git /content/storyai
+%cd /content/storyai
+!python -m pip install -U pip
+!pip install -r requirements.txt
 
-rm -rf /content/storyai
-git clone https://github.com/aksakalai/storyai.git /content/storyai
-cd /content/storyai
-python -m pip install -U pip
-pip install -r requirements.txt
-export OPENAI_API_KEY="PASTE_YOUR_KEY_HERE"
-export STORYAI_SHARE=true
-python -u -m app.main
+import os
+
+os.environ["OPENAI_API_KEY"] = "PASTE_YOUR_KEY_HERE"
+os.environ["STORYAI_SHARE"] = "true"
+
+!python -u -m app.main
 ```
 
 This keeps the repo clean while still letting you paste the API key directly into the Colab cell for private demo use.

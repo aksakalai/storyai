@@ -3,7 +3,7 @@ import threading
 
 import gradio as gr
 
-from .pipeline import run_story_package_pipeline
+from .pipeline import DEFAULT_RUNS_DIR, run_story_package_pipeline
 
 
 RUN_LOCK = threading.Lock()
@@ -102,6 +102,10 @@ def launch_app() -> None:
     demo = build_demo()
     share = os.getenv("STORYAI_SHARE")
     should_share = share.lower() == "true" if share else "COLAB_RELEASE_TAG" in os.environ
+
+    print("Starting StoryAI...", flush=True)
+    print(f"Share link enabled: {should_share}", flush=True)
+    print(f"Artifacts directory: {DEFAULT_RUNS_DIR.resolve()}", flush=True)
 
     demo.queue(default_concurrency_limit=1)
     demo.launch(
