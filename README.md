@@ -2,7 +2,7 @@
 
 StoryAI is a Colab-first Gradio app for turning a single child drawing into a structured bedtime story package with OpenAI.
 
-The current scaffold implements the first four phases of the agreed workflow:
+The current scaffold implements the agreed single-run demo workflow:
 
 - upload or capture one drawing
 - save the original image and a normalized working copy
@@ -10,10 +10,12 @@ The current scaffold implements the first four phases of the agreed workflow:
 - generate 3 page images from the story package
 - generate 3 narration audio clips from the story parts
 - transcribe the 3 narration clips with word timestamps
+- render 3 page video clips with persistent word highlighting
+- concatenate the 3 clips into a final story video
 - save artifacts locally
-- show the story parts, generated images, narration audio, transcripts, word timings, and final image prompts in the Gradio UI
+- show the story parts, generated images, narration audio, transcripts, word timings, rendered clips, and final video in the Gradio UI
 
-The later phases for subtitle rendering and final video assembly will build on top of this repo structure.
+This now covers the full single-run demo pipeline on Colab CPU.
 
 ## Colab
 
@@ -32,6 +34,8 @@ subprocess.run(
     check=True,
 )
 os.chdir("/content/storyai")
+subprocess.run(["apt-get", "update"], check=True)
+subprocess.run(["apt-get", "install", "-y", "ffmpeg"], check=True)
 subprocess.run([sys.executable, "-m", "pip", "install", "-U", "pip"], check=True)
 subprocess.run([sys.executable, "-m", "pip", "install", "-r", "requirements.txt"], check=True)
 
@@ -52,6 +56,7 @@ app/
   pipeline.py
   prompts.py
   schemas.py
+  video.py
 requirements.txt
 README.md
 ```
@@ -75,9 +80,18 @@ Each run currently writes:
 - `page_1_timestamps.json`
 - `page_2_timestamps.json`
 - `page_3_timestamps.json`
+- `page_1_subtitles.ass`
+- `page_2_subtitles.ass`
+- `page_3_subtitles.ass`
 - `page_1_prompt.txt`
 - `page_2_prompt.txt`
 - `page_3_prompt.txt`
+- `page_1.mp4`
+- `page_2.mp4`
+- `page_3.mp4`
+- `page_videos_concat.txt`
 - `page_images.json`
 - `page_audio.json`
 - `page_timestamps.json`
+- `page_videos.json`
+- `final_story.mp4`

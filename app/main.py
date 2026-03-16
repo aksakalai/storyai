@@ -12,7 +12,7 @@ RUN_LOCK = threading.Lock()
 
 
 def generate_story(image_path: str):
-    """Generate a structured story package from one uploaded image."""
+    """Generate the full story, media, and rendered video outputs."""
 
     if not image_path:
         raise gr.Error("Upload or capture one drawing first.")
@@ -32,6 +32,7 @@ def generate_story(image_path: str):
         page_images = result["page_images"]
         page_audio = result["page_audio"]
         page_timestamps = result["page_timestamps"]
+        page_videos = result["page_videos"]
         debug_print(
             "GRADIO RESULT",
             {
@@ -43,6 +44,8 @@ def generate_story(image_path: str):
                 "page_image_manifest_path": result["page_image_manifest_path"],
                 "page_audio_manifest_path": result["page_audio_manifest_path"],
                 "page_timestamps_manifest_path": result["page_timestamps_manifest_path"],
+                "page_video_manifest_path": result["page_video_manifest_path"],
+                "final_video_path": result["final_video_path"],
             },
         )
 
@@ -59,18 +62,22 @@ def generate_story(image_path: str):
             page_images[0]["image_path"],
             page_images[0]["final_prompt"],
             page_audio[0]["audio_path"],
+            page_videos[0]["video_path"],
             page_timestamps[0]["text"],
             page_timestamps[0]["words"],
             page_images[1]["image_path"],
             page_images[1]["final_prompt"],
             page_audio[1]["audio_path"],
+            page_videos[1]["video_path"],
             page_timestamps[1]["text"],
             page_timestamps[1]["words"],
             page_images[2]["image_path"],
             page_images[2]["final_prompt"],
             page_audio[2]["audio_path"],
+            page_videos[2]["video_path"],
             page_timestamps[2]["text"],
             page_timestamps[2]["words"],
+            result["final_video_path"],
             story.model_dump(mode="json"),
             f"Artifacts saved to {result['run_dir']}",
         )
@@ -88,7 +95,7 @@ def build_demo() -> gr.Blocks:
         gr.Markdown(
             """
             # StoryAI
-            Upload or capture one child drawing, then generate a structured three-part bedtime story package and three page images.
+            Upload or capture one child drawing, then generate a structured three-part bedtime story package, page images, narration, timestamps, and rendered story videos.
             """
         )
 
@@ -100,7 +107,7 @@ def build_demo() -> gr.Blocks:
             )
             working_image = gr.Image(label="Normalized working image")
 
-        generate_button = gr.Button("Generate Story + Page Images", variant="primary")
+        generate_button = gr.Button("Generate Story + Videos", variant="primary")
         status_output = gr.Textbox(label="Run status")
 
         title_output = gr.Textbox(label="Title")
@@ -112,6 +119,7 @@ def build_demo() -> gr.Blocks:
         part_2_prompt = gr.Textbox(label="Part 2 image prompt", lines=4)
         part_3_text = gr.Textbox(label="Part 3 text", lines=5)
         part_3_prompt = gr.Textbox(label="Part 3 image prompt", lines=4)
+        final_video = gr.Video(label="Final story video")
         story_json = gr.JSON(label="Story package JSON")
 
         with gr.Tabs():
@@ -122,6 +130,7 @@ def build_demo() -> gr.Blocks:
                     lines=9,
                 )
                 page_1_audio = gr.Audio(label="Page 1 narration")
+                page_1_video = gr.Video(label="Page 1 rendered clip")
                 page_1_transcript = gr.Textbox(label="Page 1 transcript", lines=5)
                 page_1_words = gr.JSON(label="Page 1 word timestamps")
 
@@ -132,6 +141,7 @@ def build_demo() -> gr.Blocks:
                     lines=9,
                 )
                 page_2_audio = gr.Audio(label="Page 2 narration")
+                page_2_video = gr.Video(label="Page 2 rendered clip")
                 page_2_transcript = gr.Textbox(label="Page 2 transcript", lines=5)
                 page_2_words = gr.JSON(label="Page 2 word timestamps")
 
@@ -142,6 +152,7 @@ def build_demo() -> gr.Blocks:
                     lines=9,
                 )
                 page_3_audio = gr.Audio(label="Page 3 narration")
+                page_3_video = gr.Video(label="Page 3 rendered clip")
                 page_3_transcript = gr.Textbox(label="Page 3 transcript", lines=5)
                 page_3_words = gr.JSON(label="Page 3 word timestamps")
 
@@ -161,18 +172,22 @@ def build_demo() -> gr.Blocks:
                 page_1_image,
                 page_1_final_prompt,
                 page_1_audio,
+                page_1_video,
                 page_1_transcript,
                 page_1_words,
                 page_2_image,
                 page_2_final_prompt,
                 page_2_audio,
+                page_2_video,
                 page_2_transcript,
                 page_2_words,
                 page_3_image,
                 page_3_final_prompt,
                 page_3_audio,
+                page_3_video,
                 page_3_transcript,
                 page_3_words,
+                final_video,
                 story_json,
                 status_output,
             ],
