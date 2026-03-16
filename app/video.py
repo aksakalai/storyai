@@ -16,12 +16,16 @@ CARD_X = 72
 CARD_WIDTH = 880
 CARD_BOTTOM_MARGIN = 64
 CARD_MIN_HEIGHT = 220
-CARD_MAX_HEIGHT = 340
+CARD_MAX_HEIGHT = 420
+CARD_PADDING_X = 88
+CARD_PADDING_Y = 52
+CARD_TEXT_WIDTH = CARD_WIDTH - (CARD_PADDING_X * 2)
 FONT_NAME = os.getenv("STORYAI_SUBTITLE_FONT", "DejaVu Serif")
-FONT_SIZE = int(os.getenv("STORYAI_SUBTITLE_FONT_SIZE", "34"))
+DEFAULT_FONT_SIZE = int(os.getenv("STORYAI_SUBTITLE_FONT_SIZE", "34"))
+MIN_FONT_SIZE = int(os.getenv("STORYAI_MIN_SUBTITLE_FONT_SIZE", "22"))
 MIN_WORD_DURATION = float(os.getenv("STORYAI_MIN_WORD_DURATION", "0.12"))
-MAX_SUBTITLE_LINES = 5
-WRAP_CHAR_CANDIDATES = range(32, 51, 2)
+MAX_SUBTITLE_LINES = 6
+LINE_HEIGHT_RATIO = 1.35
 ASS_PAST_COLOR = "&HFFFFFF&"
 ASS_CURRENT_COLOR = "&H7BD7F5&"
 ASS_FUTURE_COLOR = "&HBFC9D1&"
@@ -45,6 +49,21 @@ class SubtitleEvent:
     end: float
     current_index: int | None
     completed_index: int
+
+
+@dataclass
+class SubtitleLayout:
+    """Resolved card and text placement for one subtitle script."""
+
+    wrapped_lines: list[list[int]]
+    font_size: int
+    line_height: int
+    line_count: int
+    content_height: int
+    card_height: int
+    card_y: int
+    text_center_x: int
+    text_center_y: int
 
 
 def render_page_video(
@@ -71,11 +90,8 @@ def render_page_video(
         output_path=subtitles_path,
     )
 
-    card_height = max(
-        CARD_MIN_HEIGHT,
-        min(CARD_MAX_HEIGHT, 140 + subtitle_summary["line_count"] * 40),
-    )
-    card_y = VIDEO_HEIGHT - card_height - CARD_BOTTOM_MARGIN
+    card_height = subtitle_summary["card_height"]
+    card_y = subtitle_summary["card_y"]
 
     subtitles_filter = f"subtitles={subtitles_path.name}"
     if DEFAULT_FONTS_DIR.exists():
@@ -99,6 +115,7 @@ def render_page_video(
         "duration_seconds": round(duration_seconds, 3),
         "subtitle_line_count": subtitle_summary["line_count"],
         "subtitle_event_count": subtitle_summary["event_count"],
+        "subtitle_font_size": subtitle_summary["font_size"],
         "story_card": {
             "x": CARD_X,
             "y": card_y,
@@ -164,6 +181,7 @@ def render_page_video(
         "duration_seconds": round(duration_seconds, 3),
         "line_count": subtitle_summary["line_count"],
         "event_count": subtitle_summary["event_count"],
+        "font_size": subtitle_summary["font_size"],
         "story_card": {
             "x": CARD_X,
             "y": card_y,
@@ -285,12 +303,12 @@ def write_highlighted_subtitles(
     """Write an ASS subtitle file with persistent storybook highlighting."""
 
     aligned_tokens = _align_story_tokens(story_text, words, duration_seconds)
-    wrapped_lines = _wrap_tokens(aligned_tokens)
+    layout = _choose_subtitle_layout(aligned_tokens)
     events = _build_subtitle_events(aligned_tokens, duration_seconds)
 
     script = _build_ass_script(
         aligned_tokens=aligned_tokens,
-        wrapped_lines=wrapped_lines,
+        layout=layout,
         events=events,
     )
     output_path.write_text(script, encoding="utf-8")
@@ -298,8 +316,11 @@ def write_highlighted_subtitles(
     response_summary = {
         "output_path": str(output_path.resolve()),
         "token_count": len(aligned_tokens),
-        "line_count": len(wrapped_lines),
+        "line_count": layout.line_count,
         "event_count": len(events),
+        "font_size": layout.font_size,
+        "card_height": layout.card_height,
+        "card_y": layout.card_y,
         "duration_seconds": round(duration_seconds, 3),
     }
     debug_print("SUBTITLE SCRIPT", response_summary)
@@ -405,38 +426,84 @@ def _fill_missing_timing_gaps(
             token.end = token.start
 
 
-def _wrap_tokens(tokens: list[AlignedToken]) -> list[list[int]]:
-    """Wrap tokens into centered storybook lines that fit the card."""
+def _choose_subtitle_layout(tokens: list[AlignedToken]) -> SubtitleLayout:
+    """Choose a conservative wrapping and font size that stays inside the card."""
 
     if not tokens:
-        return []
+        card_height = CARD_MIN_HEIGHT
+        card_y = VIDEO_HEIGHT - card_height - CARD_BOTTOM_MARGIN
+        return SubtitleLayout(
+            wrapped_lines=[],
+            font_size=DEFAULT_FONT_SIZE,
+            line_height=round(DEFAULT_FONT_SIZE * LINE_HEIGHT_RATIO),
+            line_count=0,
+            content_height=0,
+            card_height=card_height,
+            card_y=card_y,
+            text_center_x=CARD_X + (CARD_WIDTH // 2),
+            text_center_y=card_y + (card_height // 2),
+        )
 
-    best_lines: list[list[int]] | None = None
-    for max_chars in WRAP_CHAR_CANDIDATES:
-        lines = _wrap_tokens_for_width(tokens, max_chars)
-        best_lines = lines
-        if len(lines) <= MAX_SUBTITLE_LINES:
-            return lines
-    return best_lines or [[index] for index in range(len(tokens))]
+    candidate_sizes = []
+    for font_size in range(DEFAULT_FONT_SIZE, MIN_FONT_SIZE - 1, -2):
+        if font_size not in candidate_sizes:
+            candidate_sizes.append(font_size)
+    if MIN_FONT_SIZE not in candidate_sizes:
+        candidate_sizes.append(MIN_FONT_SIZE)
+
+    best_layout: SubtitleLayout | None = None
+    for font_size in candidate_sizes:
+        wrapped_lines = _wrap_tokens_for_font(tokens, font_size)
+        line_count = len(wrapped_lines)
+        line_height = round(font_size * LINE_HEIGHT_RATIO)
+        content_height = line_count * line_height
+        card_height = max(
+            CARD_MIN_HEIGHT,
+            min(CARD_MAX_HEIGHT, content_height + (CARD_PADDING_Y * 2)),
+        )
+        card_y = VIDEO_HEIGHT - card_height - CARD_BOTTOM_MARGIN
+        layout = SubtitleLayout(
+            wrapped_lines=wrapped_lines,
+            font_size=font_size,
+            line_height=line_height,
+            line_count=line_count,
+            content_height=content_height,
+            card_height=card_height,
+            card_y=card_y,
+            text_center_x=CARD_X + (CARD_WIDTH // 2),
+            text_center_y=card_y + (card_height // 2),
+        )
+        best_layout = layout
+
+        fits_height = content_height + (CARD_PADDING_Y * 2) <= CARD_MAX_HEIGHT
+        if fits_height and line_count <= MAX_SUBTITLE_LINES:
+            return layout
+
+    return best_layout
 
 
-def _wrap_tokens_for_width(tokens: list[AlignedToken], max_chars: int) -> list[list[int]]:
-    """Greedily wrap tokens by character count."""
+def _wrap_tokens_for_font(tokens: list[AlignedToken], font_size: int) -> list[list[int]]:
+    """Greedily wrap tokens using a conservative estimated text width."""
 
     lines: list[list[int]] = []
     current_line: list[int] = []
-    current_length = 0
+    current_width_units = 0.0
+    max_width_units = (CARD_TEXT_WIDTH / font_size) * 0.88
+    space_width_units = _estimate_text_width_units(" ")
 
     for index, token in enumerate(tokens):
-        token_length = len(token.text)
-        projected_length = token_length if not current_line else current_length + 1 + token_length
-        if current_line and projected_length > max_chars:
+        token_width_units = _estimate_text_width_units(token.text)
+        projected_width = token_width_units
+        if current_line:
+            projected_width = current_width_units + space_width_units + token_width_units
+
+        if current_line and projected_width > max_width_units:
             lines.append(current_line)
             current_line = [index]
-            current_length = token_length
+            current_width_units = token_width_units
         else:
             current_line.append(index)
-            current_length = projected_length
+            current_width_units = projected_width
 
     if current_line:
         lines.append(current_line)
@@ -507,7 +574,7 @@ def _build_subtitle_events(
 
 def _build_ass_script(
     aligned_tokens: list[AlignedToken],
-    wrapped_lines: list[list[int]],
+    layout: SubtitleLayout,
     events: list[SubtitleEvent],
 ) -> str:
     """Build the ASS subtitle text that ffmpeg will burn into the video."""
@@ -521,7 +588,7 @@ ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Story,{FONT_NAME},{FONT_SIZE},&H00FFFFFF,&H00FFFFFF,&H50000000,&H00000000,-1,0,0,0,100,100,0,0,1,1,0,2,96,96,96,1
+Style: Story,{FONT_NAME},{layout.font_size},&H00FFFFFF,&H00FFFFFF,&H50000000,&H00000000,-1,0,0,0,100,100,0,0,1,1,0,5,0,0,0,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
@@ -531,14 +598,15 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     for event in events:
         text = _render_event_text(
             aligned_tokens=aligned_tokens,
-            wrapped_lines=wrapped_lines,
+            wrapped_lines=layout.wrapped_lines,
             event=event,
         )
         event_lines.append(
             "Dialogue: 0,"
             f"{_format_ass_timestamp(event.start)},"
             f"{_format_ass_timestamp(event.end)},"
-            f"Story,,0,0,0,,{{\\q2}}{text}"
+            "Story,,0,0,0,,"
+            f"{{\\an5\\q2\\pos({layout.text_center_x},{layout.text_center_y})}}{text}"
         )
 
     return header + "\n".join(event_lines) + "\n"
@@ -596,6 +664,26 @@ def _escape_ass_text(text: str) -> str:
     escaped = text.replace("\\", r"\\")
     escaped = escaped.replace("{", "(").replace("}", ")")
     return escaped
+
+
+def _estimate_text_width_units(text: str) -> float:
+    """Estimate relative text width conservatively for proportional storybook text."""
+
+    width = 0.0
+    for character in text:
+        if character == " ":
+            width += 0.35
+        elif character in "ilI'`.,:;!?":
+            width += 0.34
+        elif character in "mwMW@#%&":
+            width += 0.95
+        elif character.isupper():
+            width += 0.74
+        elif character.isdigit():
+            width += 0.62
+        else:
+            width += 0.60
+    return width
 
 
 def _format_ass_timestamp(value: float) -> str:

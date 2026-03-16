@@ -13,7 +13,7 @@ The current scaffold implements the agreed single-run demo workflow:
 - render 3 page video clips with persistent word highlighting
 - concatenate the 3 clips into a final story video
 - save artifacts locally
-- show the story parts, generated images, narration audio, transcripts, word timings, rendered clips, and final video in the Gradio UI
+- show the story parts, generated images, narration audio, transcripts, word timings, and final stitched video in the Gradio UI
 
 This now covers the full single-run demo pipeline on Colab CPU.
 
