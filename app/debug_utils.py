@@ -72,14 +72,32 @@ def summarize_wav_audio(path: str | Path) -> dict[str, Any]:
     if resolved.exists() and resolved.suffix.lower() == ".wav":
         with wave.open(str(resolved), "rb") as audio_file:
             frame_count = audio_file.getnframes()
+            channels = audio_file.getnchannels()
+            sample_width = audio_file.getsampwidth()
             frame_rate = audio_file.getframerate()
+            bytes_per_frame = channels * sample_width
+            size_bytes = summary.get("size_bytes", 0)
+            estimated_frame_count = (
+                max((size_bytes - 44) // bytes_per_frame, 0)
+                if bytes_per_frame and size_bytes
+                else 0
+            )
+
+            frame_count_source = "wav_header"
+            if estimated_frame_count and (
+                frame_count <= 0 or frame_count > estimated_frame_count * 2
+            ):
+                frame_count = estimated_frame_count
+                frame_count_source = "estimated_from_size"
+
             duration_seconds = frame_count / frame_rate if frame_rate else 0.0
             summary.update(
                 {
-                    "channels": audio_file.getnchannels(),
-                    "sample_width_bytes": audio_file.getsampwidth(),
+                    "channels": channels,
+                    "sample_width_bytes": sample_width,
                     "frame_rate": frame_rate,
                     "frame_count": frame_count,
+                    "frame_count_source": frame_count_source,
                     "duration_seconds": round(duration_seconds, 3),
                 }
             )
