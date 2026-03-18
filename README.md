@@ -9,7 +9,7 @@ The current scaffold implements the agreed single-run demo workflow:
 - make one OpenAI call for a structured `StoryPackage`
 - generate 3 page images from the story package
 - generate 3 narration audio clips from the story parts
-- align the 3 narration clips to the exact story text with NeMo Forced Aligner
+- align the 3 narration clips to the exact story text with Montreal Forced Aligner
 - render 3 page video clips with persistent word highlighting
 - concatenate the 3 clips into a final story video
 - save artifacts locally
@@ -27,21 +27,28 @@ import shutil
 
 os.chdir("/content")
 shutil.rmtree("/content/storyai", ignore_errors=True)
-shutil.rmtree("/content/NeMo", ignore_errors=True)
 !git clone https://github.com/aksakalai/storyai.git /content/storyai
-!git clone --depth 1 --filter=blob:none --sparse https://github.com/NVIDIA/NeMo.git /content/NeMo
-!git -C /content/NeMo sparse-checkout set tools/nemo_forced_aligner
-os.chdir("/content/storyai")
+
+if not os.path.exists("/content/miniforge/bin/conda"):
+    !wget -qO /content/miniforge.sh https://github.com/conda-forge/miniforge/releases/latest/download/Miniforge3-Linux-x86_64.sh
+    !bash /content/miniforge.sh -b -p /content/miniforge
+
+if not os.path.exists("/content/mfa-env/bin/mfa"):
+    !/content/miniforge/bin/conda create -y -p /content/mfa-env -c conda-forge montreal-forced-aligner
+
+!/content/mfa-env/bin/mfa model download acoustic english_mfa
+!/content/mfa-env/bin/mfa model download g2p english_us_mfa
+
 !apt-get update
-!apt-get install -y ffmpeg libsndfile1
+!apt-get install -y ffmpeg
+
+os.chdir("/content/storyai")
 !pip install -U pip
 !pip install -r requirements.txt
-!pip install Cython packaging
-!pip install "nemo_toolkit[asr]>=2.5.0"
 
 os.environ["OPENAI_API_KEY"] = "PASTE_YOUR_KEY_HERE"
 os.environ["STORYAI_SHARE"] = "true"
-os.environ["STORYAI_NEMO_REPO"] = "/content/NeMo"
+os.environ["STORYAI_MFA_BIN"] = "/content/mfa-env/bin/mfa"
 
 # Image quality switch for non-coders:
 # - "default" = Default / budget-friendly mode
@@ -71,8 +78,8 @@ os.environ["STORYAI_IMAGE_MODE"] = "default"
 ```
 
 This keeps the repo clean while still letting you paste the API key directly into the Colab cell for private demo use.
-The first generation in a fresh Colab runtime will also download the NeMo acoustic model once, so that run will start more slowly than the next ones.
-The NeMo checkout uses sparse checkout so Colab only pulls the forced-aligner tool folder, not the whole repository contents.
+The first time in a fresh Colab runtime, the setup also installs a small isolated MFA environment and downloads the pretrained acoustic and G2P models, so startup will take longer than later runs in the same session.
+MFA lives in its own Conda environment, which avoids package conflicts with Colab's main Python runtime.
 
 ### Simple quality switch
 
@@ -80,7 +87,7 @@ StoryAI now uses these fixed models:
 
 - story: `gpt-5.4`
 - narration: `gpt-4o-mini-tts`
-- timing: `NeMo Forced Aligner` with `stt_en_citrinet_256_gamma_0_25`
+- timing: `Montreal Forced Aligner` with `english_mfa` + `english_us_mfa`
 
 The only simple switch is image generation:
 
@@ -133,8 +140,13 @@ Each run currently writes:
 - `page_1_audio.wav`
 - `page_2_audio.wav`
 - `page_3_audio.wav`
-- `nemo_alignment_manifest.jsonl`
-- `nemo_alignment/`
+- `mfa_word_list.txt`
+- `mfa_dictionary.txt`
+- `page_1_alignment.txt`
+- `page_2_alignment.txt`
+- `page_3_alignment.txt`
+- `mfa_alignment/`
+- `mfa_temp/`
 - `page_1_timestamps.json`
 - `page_2_timestamps.json`
 - `page_3_timestamps.json`

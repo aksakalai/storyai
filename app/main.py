@@ -216,7 +216,7 @@ def launch_app() -> None:
         f"({model_config['alignment_model']})",
         flush=True,
     )
-    print(f"Alignment script: {alignment_runtime['alignment_script']}", flush=True)
+    print(f"Alignment tool: {alignment_runtime['alignment_tool']}", flush=True)
     print(f"Terminal debug logging: {DEBUG_ENABLED}", flush=True)
 
     demo.queue(default_concurrency_limit=1)
