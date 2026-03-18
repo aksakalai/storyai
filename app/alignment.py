@@ -1,4 +1,5 @@
 import json
+import importlib.util
 import os
 import subprocess
 import sys
@@ -24,6 +25,30 @@ def get_alignment_runtime_config() -> dict[str, str]:
 
     return {
         "timing_engine": DEFAULT_ALIGNMENT_ENGINE,
+        "alignment_model": DEFAULT_NEMO_MODEL,
+    }
+
+
+def validate_alignment_runtime() -> dict[str, str]:
+    """Fail early if the configured NeMo alignment runtime is not available."""
+
+    align_script = _resolve_nemo_align_script()
+
+    if importlib.util.find_spec("nemo") is None:
+        raise RuntimeError(
+            "NeMo Forced Aligner is configured, but nemo_toolkit is not installed. "
+            "In Colab, install it with: pip install \"nemo_toolkit[asr]>=2.5.0\""
+        )
+
+    if importlib.util.find_spec("soundfile") is None:
+        raise RuntimeError(
+            "NeMo Forced Aligner is configured, but the Python soundfile package "
+            "is not available. In Colab, install the README dependencies and "
+            "apt-get install libsndfile1."
+        )
+
+    return {
+        "alignment_script": str(align_script.resolve()),
         "alignment_model": DEFAULT_NEMO_MODEL,
     }
 
