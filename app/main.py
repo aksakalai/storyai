@@ -7,7 +7,6 @@ import gradio as gr
 from .debug_utils import DEBUG_ENABLED, debug_print
 from .openai_api import get_runtime_model_config
 from .pipeline import DEFAULT_RUNS_DIR, run_story_package_pipeline
-from .alignment import validate_alignment_runtime
 
 
 RUN_LOCK = threading.Lock()
@@ -194,7 +193,6 @@ def launch_app() -> None:
     """Launch the app with sensible defaults for Colab and local runs."""
 
     model_config = get_runtime_model_config()
-    alignment_runtime = validate_alignment_runtime()
     demo = build_demo()
     share = os.getenv("STORYAI_SHARE")
     should_share = share.lower() == "true" if share else "COLAB_RELEASE_TAG" in os.environ
@@ -210,13 +208,7 @@ def launch_app() -> None:
     )
     print(f"Story model: {model_config['story_model']}", flush=True)
     print(f"TTS model: {model_config['tts_model']}", flush=True)
-    print(
-        "Timing engine: "
-        f"{model_config['timing_engine']} "
-        f"({model_config['alignment_model']})",
-        flush=True,
-    )
-    print(f"Alignment tool: {alignment_runtime['alignment_tool']}", flush=True)
+    print(f"Timing model: {model_config['timing_model']}", flush=True)
     print(f"Terminal debug logging: {DEBUG_ENABLED}", flush=True)
 
     demo.queue(default_concurrency_limit=1)

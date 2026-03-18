@@ -215,7 +215,7 @@ def concatenate_page_videos(page_video_paths: list[Path], output_path: Path) -> 
     }
     debug_print("FINAL VIDEO REQUEST", request_payload)
 
-    copy_command = [
+    command = [
         "ffmpeg",
         "-y",
         "-hide_banner",
@@ -231,64 +231,23 @@ def concatenate_page_videos(page_video_paths: list[Path], output_path: Path) -> 
         "copy",
         output_path.name,
     ]
-    fallback_command = [
-        "ffmpeg",
-        "-y",
-        "-hide_banner",
-        "-loglevel",
-        "error",
-        "-f",
-        "concat",
-        "-safe",
-        "0",
-        "-i",
-        concat_list_path.name,
-        "-c:v",
-        "libx264",
-        "-preset",
-        "veryfast",
-        "-crf",
-        "23",
-        "-c:a",
-        "aac",
-        "-b:a",
-        "128k",
-        "-pix_fmt",
-        "yuv420p",
-        "-movflags",
-        "+faststart",
-        output_path.name,
-    ]
-
-    fallback_used = False
     try:
         subprocess.run(
-            copy_command,
+            command,
             cwd=output_path.parent,
             check=True,
             capture_output=True,
             text=True,
         )
-    except subprocess.CalledProcessError:
-        fallback_used = True
-        try:
-            subprocess.run(
-                fallback_command,
-                cwd=output_path.parent,
-                check=True,
-                capture_output=True,
-                text=True,
-            )
-        except subprocess.CalledProcessError as exc:
-            raise RuntimeError(
-                f"ffmpeg failed while concatenating the final video: {exc.stderr.strip()}"
-            ) from exc
+    except subprocess.CalledProcessError as exc:
+        raise RuntimeError(
+            f"ffmpeg failed while concatenating the final video: {exc.stderr.strip()}"
+        ) from exc
 
     response_summary = {
         "output_video": summarize_path(output_path),
         "concat_list": summarize_path(concat_list_path),
         "page_count": len(page_video_paths),
-        "fallback_reencode_used": fallback_used,
     }
     debug_print("FINAL VIDEO RESPONSE", response_summary)
     return response_summary
@@ -343,36 +302,36 @@ def _align_story_tokens(
     words: list[dict],
     duration_seconds: float,
 ) -> list[AlignedToken]:
-    """Map the original story text onto Whisper word timings."""
+    """Map the original story text onto Whisper word timings exactly."""
 
     display_tokens = [token for token in story_text.split() if token]
     if not display_tokens:
         return []
 
-    normalized_words = [_normalize_for_alignment(word.get("word", "")) for word in words]
-    word_index = 0
+    normalized_story_tokens = [_normalize_for_timing(token) for token in display_tokens]
+    normalized_story_tokens = [token for token in normalized_story_tokens if token]
+    timed_words = []
+    for word in words:
+        normalized_word = _normalize_for_timing(str(word.get("word", "") or ""))
+        if normalized_word:
+            timed_words.append((normalized_word, word))
+
+    normalized_words = [normalized_word for normalized_word, _ in timed_words]
+
+    if len(normalized_story_tokens) != len(normalized_words):
+        raise RuntimeError("Story text and transcription word counts did not match.")
+
     previous_end = 0.0
     aligned_tokens: list[AlignedToken] = []
 
-    for token in display_tokens:
-        normalized_token = _normalize_for_alignment(token)
-        matched_word = None
+    for index, token in enumerate(display_tokens):
+        normalized_token = _normalize_for_timing(token)
+        if not normalized_token:
+            raise RuntimeError("Story text contained a token that could not be timed.")
+        if normalized_token != normalized_words[index]:
+            raise RuntimeError("Story text and transcription tokens did not match exactly.")
 
-        if word_index < len(words):
-            if normalized_token:
-                match_index = _find_match_index(
-                    normalized_token=normalized_token,
-                    normalized_words=normalized_words,
-                    start_index=word_index,
-                )
-            else:
-                match_index = word_index
-
-            if match_index is None:
-                match_index = word_index
-
-            matched_word = words[match_index]
-            word_index = min(match_index + 1, len(words))
+        matched_word = timed_words[index][1]
 
         start = _coerce_float(
             matched_word.get("start") if matched_word else previous_end,
@@ -390,21 +349,6 @@ def _align_story_tokens(
 
     _fill_missing_timing_gaps(aligned_tokens, duration_seconds)
     return aligned_tokens
-
-
-def _find_match_index(
-    normalized_token: str,
-    normalized_words: list[str],
-    start_index: int,
-    max_lookahead: int = 3,
-) -> int | None:
-    """Look ahead a small amount to keep text and timings aligned."""
-
-    search_limit = min(len(normalized_words), start_index + max_lookahead + 1)
-    for index in range(start_index, search_limit):
-        if normalized_words[index] == normalized_token:
-            return index
-    return None
 
 
 def _fill_missing_timing_gaps(
@@ -706,8 +650,8 @@ def _format_ass_timestamp(value: float) -> str:
     return f"{hours}:{minutes:02d}:{seconds:02d}.{centiseconds:02d}"
 
 
-def _normalize_for_alignment(text: str) -> str:
-    """Normalize token text so curly quotes and punctuation still align."""
+def _normalize_for_timing(text: str) -> str:
+    """Normalize token text so story words match transcription words exactly."""
 
     normalized = unicodedata.normalize("NFKC", text).lower()
     normalized = normalized.translate(

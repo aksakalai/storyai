@@ -1,6 +1,9 @@
 import base64
+import json
 import mimetypes
 import os
+import re
+import unicodedata
 from pathlib import Path
 
 from openai import OpenAI
@@ -39,6 +42,12 @@ HIGH_QUALITY_PAGE_IMAGE_QUALITY = os.getenv(
 DEFAULT_TTS_MODEL = os.getenv("STORYAI_TTS_MODEL", "gpt-4o-mini-tts")
 DEFAULT_TTS_VOICE = os.getenv("STORYAI_TTS_VOICE", "marin")
 DEFAULT_TTS_FORMAT = os.getenv("STORYAI_TTS_FORMAT", "wav")
+DEFAULT_TRANSCRIPTION_MODEL = os.getenv("STORYAI_TRANSCRIPTION_MODEL", "whisper-1")
+DEFAULT_TRANSCRIPTION_RESPONSE_FORMAT = os.getenv(
+    "STORYAI_TRANSCRIPTION_RESPONSE_FORMAT",
+    "verbose_json",
+)
+DEFAULT_TRANSCRIPTION_LANGUAGE = os.getenv("STORYAI_TRANSCRIPTION_LANGUAGE", "en")
 
 
 def _env_flag(name: str, default: bool = False) -> bool:
@@ -95,11 +104,8 @@ def resolve_page_image_settings(
 def get_runtime_model_config() -> dict[str, str | bool]:
     """Return the effective model configuration for logging and user guidance."""
 
-    from .alignment import get_alignment_runtime_config
-
     image_model, image_quality = resolve_page_image_settings()
     image_mode = resolve_image_mode()
-    alignment_config = get_alignment_runtime_config()
 
     return {
         "story_model": DEFAULT_STORY_MODEL,
@@ -108,8 +114,7 @@ def get_runtime_model_config() -> dict[str, str | bool]:
         "image_mode": image_mode,
         "high_quality_images": image_mode == "high",
         "tts_model": DEFAULT_TTS_MODEL,
-        "timing_engine": alignment_config["timing_engine"],
-        "alignment_model": alignment_config["alignment_model"],
+        "timing_model": DEFAULT_TRANSCRIPTION_MODEL,
     }
 
 
@@ -286,3 +291,105 @@ def synthesize_narration(
     debug_print("TTS RESPONSE", response_summary)
 
     return response_summary
+
+
+def transcribe_audio_with_word_timestamps(
+    client: OpenAI,
+    audio_path: Path,
+    expected_text: str,
+    model: str = DEFAULT_TRANSCRIPTION_MODEL,
+    response_format: str = DEFAULT_TRANSCRIPTION_RESPONSE_FORMAT,
+    language: str = DEFAULT_TRANSCRIPTION_LANGUAGE,
+) -> dict:
+    """Transcribe one narration clip with strict word-level timestamps."""
+
+    request_payload = {
+        "model": model,
+        "response_format": response_format,
+        "timestamp_granularities": ["word"],
+        "language": language,
+        "audio": summarize_wav_audio(audio_path),
+        "expected_text": expected_text,
+    }
+    debug_print("TRANSCRIPTION REQUEST", request_payload)
+
+    with open(audio_path, "rb") as audio_file:
+        response = client.audio.transcriptions.create(
+            file=audio_file,
+            model=model,
+            response_format=response_format,
+            timestamp_granularities=["word"],
+            language=language,
+            prompt=expected_text,
+        )
+
+    raw_response = _to_jsonable(response)
+    _validate_transcription(raw_response, expected_text=expected_text)
+
+    debug_print(
+        "TRANSCRIPTION RESPONSE SUMMARY",
+        {
+            "model": model,
+            "response_format": response_format,
+            "language": raw_response.get("language"),
+            "duration": raw_response.get("duration"),
+            "text": raw_response.get("text"),
+            "word_count": len(raw_response.get("words", []) or []),
+            "segment_count": len(raw_response.get("segments", []) or []),
+        },
+    )
+    debug_print("RAW TRANSCRIPTION RESPONSE", raw_response)
+
+    return raw_response
+
+
+def _validate_transcription(raw_response: dict, expected_text: str) -> None:
+    """Require usable word timings and an exact normalized text match."""
+
+    words = raw_response.get("words", []) or []
+    if not words:
+        raise RuntimeError("Transcription did not return any word timestamps.")
+
+    expected_tokens = _normalize_transcript_tokens(expected_text)
+    if not expected_tokens:
+        raise RuntimeError("Story text did not contain any tokens for transcription validation.")
+
+    transcript_text = str(raw_response.get("text", "") or "")
+    transcript_tokens = _normalize_transcript_tokens(transcript_text)
+    word_tokens = _normalize_transcript_tokens(
+        " ".join(str(word.get("word", "") or "") for word in words)
+    )
+
+    if word_tokens != expected_tokens and transcript_tokens != expected_tokens:
+        raise RuntimeError("Transcription did not match the expected story text exactly.")
+
+
+def _normalize_transcript_tokens(text: str) -> list[str]:
+    """Normalize text into lowercase word tokens for strict transcript checks."""
+
+    normalized = unicodedata.normalize("NFKC", text).lower()
+    normalized = normalized.replace("\u2019", "'")
+    normalized = normalized.replace("\u2018", "'")
+    normalized = normalized.replace("\u201c", '"')
+    normalized = normalized.replace("\u201d", '"')
+    normalized = normalized.replace("\u2014", " ")
+    normalized = normalized.replace("\u2013", " ")
+    normalized = normalized.replace("-", " ")
+
+    tokens: list[str] = []
+    for raw_token in normalized.split():
+        cleaned = re.sub(r"^[^\w']+|[^\w']+$", "", raw_token)
+        cleaned = re.sub(r"[^a-z0-9']+", "", cleaned)
+        if cleaned:
+            tokens.append(cleaned)
+    return tokens
+
+
+def _to_jsonable(value) -> dict:
+    """Convert SDK response objects into a plain JSON-serializable dict."""
+
+    if hasattr(value, "model_dump"):
+        return value.model_dump(mode="json", warnings=False)
+    if isinstance(value, dict):
+        return value
+    return json.loads(json.dumps(value, default=str))

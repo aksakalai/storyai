@@ -7,7 +7,6 @@ from uuid import uuid4
 
 from PIL import Image, ImageOps
 
-from .alignment import align_story_audio_batch, get_alignment_runtime_config
 from .debug_utils import (
     debug_print,
     mask_api_key,
@@ -19,6 +18,7 @@ from .openai_api import (
     generate_page_image,
     generate_story_package,
     synthesize_narration,
+    transcribe_audio_with_word_timestamps,
 )
 from .schemas import StoryPackage
 from .video import concatenate_page_videos, render_page_video
@@ -56,16 +56,13 @@ def run_story_package_pipeline(image_path: str, api_key: str | None = None) -> d
     run_dir = _new_run_dir()
     copied_input_path = run_dir / f"input_image{source_path.suffix.lower() or '.png'}"
     working_image_path = run_dir / "working_image.png"
-    alignment_config = get_alignment_runtime_config()
-
     debug_print(
         "PIPELINE START",
         {
             "source_image": summarize_image(source_path),
             "run_dir": str(run_dir.resolve()),
             "story_model": os.getenv("STORYAI_STORY_MODEL", "gpt-5.4"),
-            "timing_engine": alignment_config["timing_engine"],
-            "alignment_model": alignment_config["alignment_model"],
+            "timing_model": os.getenv("STORYAI_TRANSCRIPTION_MODEL", "whisper-1"),
             "api_key": mask_api_key(api_key or os.getenv("OPENAI_API_KEY")),
         },
     )
@@ -79,7 +76,7 @@ def run_story_package_pipeline(image_path: str, api_key: str | None = None) -> d
     story_package, raw_response = generate_story_package(client, working_image_path)
     page_images = _generate_page_images(client, story_package, run_dir)
     page_audio = _generate_page_audio(client, story_package, run_dir)
-    page_timestamps = _generate_page_timestamps(page_audio, run_dir)
+    page_timestamps = _generate_page_timestamps(client, page_audio, run_dir)
     page_videos, final_video_summary = _render_page_videos(
         page_images=page_images,
         page_audio=page_audio,
@@ -213,17 +210,20 @@ def _generate_page_audio(client, story_package: StoryPackage, run_dir: Path) -> 
     return generated_audio
 
 
-def _generate_page_timestamps(page_audio: list[dict], run_dir: Path) -> list[dict]:
-    """Align each narration clip to its known story text and save timing artifacts."""
+def _generate_page_timestamps(client, page_audio: list[dict], run_dir: Path) -> list[dict]:
+    """Transcribe each narration clip and save page-level timing artifacts."""
 
-    raw_responses_by_audio_path = align_story_audio_batch(page_audio=page_audio, run_dir=run_dir)
     generated_timestamps: list[dict] = []
 
     for page_audio_item in page_audio:
         page_name = page_audio_item["page"]
         audio_path = Path(page_audio_item["audio_path"])
         output_path = run_dir / f"{page_name}_timestamps.json"
-        raw_response = raw_responses_by_audio_path[str(audio_path.resolve())]
+        raw_response = transcribe_audio_with_word_timestamps(
+            client=client,
+            audio_path=audio_path,
+            expected_text=page_audio_item["story_text"],
+        )
         _write_json(output_path, raw_response)
 
         generated_timestamps.append(
