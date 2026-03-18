@@ -1,5 +1,4 @@
 import base64
-import json
 import mimetypes
 import os
 from pathlib import Path
@@ -40,14 +39,6 @@ HIGH_QUALITY_PAGE_IMAGE_QUALITY = os.getenv(
 DEFAULT_TTS_MODEL = os.getenv("STORYAI_TTS_MODEL", "gpt-4o-mini-tts")
 DEFAULT_TTS_VOICE = os.getenv("STORYAI_TTS_VOICE", "marin")
 DEFAULT_TTS_FORMAT = os.getenv("STORYAI_TTS_FORMAT", "wav")
-DEFAULT_TRANSCRIPTION_MODEL = os.getenv(
-    "STORYAI_TRANSCRIPTION_MODEL",
-    "gpt-4o-mini-transcribe",
-)
-DEFAULT_TRANSCRIPTION_RESPONSE_FORMAT = os.getenv(
-    "STORYAI_TRANSCRIPTION_RESPONSE_FORMAT",
-    "verbose_json",
-)
 
 
 def _env_flag(name: str, default: bool = False) -> bool:
@@ -104,8 +95,11 @@ def resolve_page_image_settings(
 def get_runtime_model_config() -> dict[str, str | bool]:
     """Return the effective model configuration for logging and user guidance."""
 
+    from .alignment import get_alignment_runtime_config
+
     image_model, image_quality = resolve_page_image_settings()
     image_mode = resolve_image_mode()
+    alignment_config = get_alignment_runtime_config()
 
     return {
         "story_model": DEFAULT_STORY_MODEL,
@@ -114,7 +108,8 @@ def get_runtime_model_config() -> dict[str, str | bool]:
         "image_mode": image_mode,
         "high_quality_images": image_mode == "high",
         "tts_model": DEFAULT_TTS_MODEL,
-        "transcription_model": DEFAULT_TRANSCRIPTION_MODEL,
+        "timing_engine": alignment_config["timing_engine"],
+        "alignment_bundle": alignment_config["alignment_bundle"],
     }
 
 
@@ -291,56 +286,3 @@ def synthesize_narration(
     debug_print("TTS RESPONSE", response_summary)
 
     return response_summary
-
-
-def transcribe_audio_with_word_timestamps(
-    client: OpenAI,
-    audio_path: Path,
-    expected_text: str | None = None,
-    model: str = DEFAULT_TRANSCRIPTION_MODEL,
-    response_format: str = DEFAULT_TRANSCRIPTION_RESPONSE_FORMAT,
-) -> dict:
-    """Transcribe one audio clip with word-level timestamps."""
-
-    request_payload = {
-        "model": model,
-        "response_format": response_format,
-        "timestamp_granularities": ["word"],
-        "audio": summarize_wav_audio(audio_path),
-        "expected_text": expected_text,
-    }
-    debug_print("TRANSCRIPTION REQUEST", request_payload)
-
-    with open(audio_path, "rb") as audio_file:
-        response = client.audio.transcriptions.create(
-            file=audio_file,
-            model=model,
-            response_format=response_format,
-            timestamp_granularities=["word"],
-            prompt=expected_text,
-        )
-
-    raw_response = _to_jsonable(response)
-    debug_print(
-        "TRANSCRIPTION RESPONSE SUMMARY",
-        {
-            "model": model,
-            "response_format": response_format,
-            "text": raw_response.get("text"),
-            "word_count": len(raw_response.get("words", []) or []),
-            "segment_count": len(raw_response.get("segments", []) or []),
-        },
-    )
-    debug_print("RAW TRANSCRIPTION RESPONSE", raw_response)
-
-    return raw_response
-
-
-def _to_jsonable(value) -> dict:
-    """Convert SDK response objects into plain JSON-serializable dicts."""
-
-    if hasattr(value, "model_dump"):
-        return value.model_dump(mode="json", warnings=False)
-    if isinstance(value, dict):
-        return value
-    return json.loads(json.dumps(value, default=str))

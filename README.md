@@ -9,7 +9,7 @@ The current scaffold implements the agreed single-run demo workflow:
 - make one OpenAI call for a structured `StoryPackage`
 - generate 3 page images from the story package
 - generate 3 narration audio clips from the story parts
-- transcribe the 3 narration clips with word timestamps
+- align the 3 narration clips to the exact story text with a local word aligner
 - render 3 page video clips with persistent word highlighting
 - concatenate the 3 clips into a final story video
 - save artifacts locally
@@ -54,7 +54,8 @@ os.environ["STORYAI_SHARE"] = "true"
 #   With a balance of about $9.80, that is roughly about 22 full runs.
 #
 # Only the image generation changes between these modes.
-# The story model, narration model, and transcription model stay fixed.
+# The story model and narration model stay fixed.
+# Word timing is generated locally for free.
 # Use high-quality mode when presenting the project live or recording a demo.
 # Use the default mode for normal testing so the balance lasts much longer.
 # If you are getting close to those run counts, tell Baris to top up the balance.
@@ -64,6 +65,7 @@ os.environ["STORYAI_IMAGE_MODE"] = "default"
 ```
 
 This keeps the repo clean while still letting you paste the API key directly into the Colab cell for private demo use.
+The first generation in a fresh Colab runtime will also download the local alignment model once, so that run will start more slowly than the next ones.
 
 ### Simple quality switch
 
@@ -71,7 +73,7 @@ StoryAI now uses these fixed models:
 
 - story: `gpt-5.4`
 - narration: `gpt-4o-mini-tts`
-- transcription: `gpt-4o-mini-transcribe`
+- timing: local forced alignment with `WAV2VEC2_ASR_BASE_960H`
 
 The only simple switch is image generation:
 
@@ -91,12 +93,13 @@ The only simple switch is image generation:
   - rough cost: about `$0.43` per full story run
   - rough run count from about `$9.80` balance: about `22` runs
 
-These are rough planning numbers based on the current OpenAI pricing as of March 18, 2026 and a typical StoryAI run with about 1.5 minutes of total narration. Longer stories will cost a bit more. If you are getting close to those run counts, top up the balance before continuing.
+These are rough planning numbers based on the current OpenAI pricing as of March 18, 2026 and a typical StoryAI run with about 1.5 minutes of total narration. The timing step is local and free, so the main cost difference is still the image mode. If you are getting close to those run counts, top up the balance before continuing.
 
 ## Local layout
 
 ```text
 app/
+  alignment.py
   main.py
   openai_api.py
   pipeline.py

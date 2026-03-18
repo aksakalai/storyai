@@ -208,7 +208,12 @@ def launch_app() -> None:
     )
     print(f"Story model: {model_config['story_model']}", flush=True)
     print(f"TTS model: {model_config['tts_model']}", flush=True)
-    print(f"Transcription model: {model_config['transcription_model']}", flush=True)
+    print(
+        "Timing engine: "
+        f"{model_config['timing_engine']} "
+        f"({model_config['alignment_bundle']})",
+        flush=True,
+    )
     print(f"Terminal debug logging: {DEBUG_ENABLED}", flush=True)
 
     demo.queue(default_concurrency_limit=1)
