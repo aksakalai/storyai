@@ -19,11 +19,19 @@ from .schemas import StoryPackage
 DEFAULT_STORY_MODEL = os.getenv("STORYAI_STORY_MODEL", "gpt-5.4")
 DEFAULT_IMAGE_DETAIL = os.getenv("STORYAI_IMAGE_DETAIL", "low")
 DEFAULT_PAGE_IMAGE_SIZE = os.getenv("STORYAI_PAGE_IMAGE_SIZE", "1024x1024")
-DEFAULT_PAGE_IMAGE_MODEL = "gpt-image-1.5"
-DEFAULT_PAGE_IMAGE_QUALITY = "low"
+DEFAULT_PAGE_IMAGE_MODEL = os.getenv("STORYAI_PAGE_IMAGE_MODEL", "gpt-image-1.5")
+DEFAULT_PAGE_IMAGE_QUALITY = os.getenv("STORYAI_PAGE_IMAGE_QUALITY", "low")
+MEDIUM_QUALITY_PAGE_IMAGE_MODEL = os.getenv(
+    "STORYAI_MEDIUM_QUALITY_PAGE_IMAGE_MODEL",
+    DEFAULT_PAGE_IMAGE_MODEL,
+)
+MEDIUM_QUALITY_PAGE_IMAGE_QUALITY = os.getenv(
+    "STORYAI_MEDIUM_QUALITY_PAGE_IMAGE_QUALITY",
+    "medium",
+)
 HIGH_QUALITY_PAGE_IMAGE_MODEL = os.getenv(
     "STORYAI_HIGH_QUALITY_PAGE_IMAGE_MODEL",
-    "gpt-image-1.5",
+    DEFAULT_PAGE_IMAGE_MODEL,
 )
 HIGH_QUALITY_PAGE_IMAGE_QUALITY = os.getenv(
     "STORYAI_HIGH_QUALITY_PAGE_IMAGE_QUALITY",
@@ -51,21 +59,40 @@ def _env_flag(name: str, default: bool = False) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def resolve_image_mode() -> str:
+    """Resolve the simple image mode selector used by Colab and local runs."""
+
+    raw_mode = os.getenv("STORYAI_IMAGE_MODE")
+    if raw_mode:
+        normalized = raw_mode.strip().lower()
+        if normalized in {"0", "default", "budget", "low", "false"}:
+            return "default"
+        if normalized in {"1", "medium", "med"}:
+            return "medium"
+        if normalized in {"2", "high", "hq", "true"}:
+            return "high"
+
+    if _env_flag("STORYAI_HIGH_QUALITY_IMAGES", default=False):
+        return "high"
+    return "default"
+
+
 def resolve_page_image_settings(
     model: str | None = None,
     quality: str | None = None,
 ) -> tuple[str, str]:
     """Resolve image generation settings from a simple quality flag or explicit overrides."""
 
-    high_quality_images = _env_flag("STORYAI_HIGH_QUALITY_IMAGES", default=False)
-    profile_model = (
-        HIGH_QUALITY_PAGE_IMAGE_MODEL if high_quality_images else DEFAULT_PAGE_IMAGE_MODEL
-    )
-    profile_quality = (
-        HIGH_QUALITY_PAGE_IMAGE_QUALITY
-        if high_quality_images
-        else DEFAULT_PAGE_IMAGE_QUALITY
-    )
+    image_mode = resolve_image_mode()
+    if image_mode == "medium":
+        profile_model = MEDIUM_QUALITY_PAGE_IMAGE_MODEL
+        profile_quality = MEDIUM_QUALITY_PAGE_IMAGE_QUALITY
+    elif image_mode == "high":
+        profile_model = HIGH_QUALITY_PAGE_IMAGE_MODEL
+        profile_quality = HIGH_QUALITY_PAGE_IMAGE_QUALITY
+    else:
+        profile_model = DEFAULT_PAGE_IMAGE_MODEL
+        profile_quality = DEFAULT_PAGE_IMAGE_QUALITY
 
     resolved_model = model or os.getenv("STORYAI_PAGE_IMAGE_MODEL") or profile_model
     resolved_quality = (
@@ -78,14 +105,14 @@ def get_runtime_model_config() -> dict[str, str | bool]:
     """Return the effective model configuration for logging and user guidance."""
 
     image_model, image_quality = resolve_page_image_settings()
-    high_quality_images = _env_flag("STORYAI_HIGH_QUALITY_IMAGES", default=False)
+    image_mode = resolve_image_mode()
 
     return {
         "story_model": DEFAULT_STORY_MODEL,
         "image_model": image_model,
         "image_quality": image_quality,
-        "image_mode": "high_quality" if high_quality_images else "default",
-        "high_quality_images": high_quality_images,
+        "image_mode": image_mode,
+        "high_quality_images": image_mode == "high",
         "tts_model": DEFAULT_TTS_MODEL,
         "transcription_model": DEFAULT_TRANSCRIPTION_MODEL,
     }

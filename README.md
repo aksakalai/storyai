@@ -43,21 +43,27 @@ os.environ["OPENAI_API_KEY"] = "PASTE_YOUR_KEY_HERE"
 os.environ["STORYAI_SHARE"] = "true"
 
 # Image quality switch for non-coders:
-# - "false" = Default / budget-friendly mode
+# - "default" = Default / budget-friendly mode
 #   Uses GPT Image 1.5 at low quality.
 #   Roughly about $0.06 per full story run.
 #   With a balance of about $9.80, that is roughly about 150 full runs.
 #
-# - "true" = High-quality mode
+# - "medium" = Medium quality mode
+#   Uses GPT Image 1.5 at medium quality.
+#   Roughly about $0.14 per full story run.
+#   With a balance of about $9.80, that is roughly about 70 full runs.
+#
+# - "high" = High-quality mode
 #   Uses GPT Image 1.5 at high quality.
 #   Roughly about $0.43 per full story run.
 #   With a balance of about $9.80, that is roughly about 22 full runs.
 #
-# Only the image generation changes between these two modes.
+# Only the image generation changes between these modes.
 # The story model, narration model, and transcription model stay fixed.
 # Use high-quality mode when presenting the project live or recording a demo.
 # Use the default mode for normal testing so the balance lasts much longer.
-os.environ["STORYAI_HIGH_QUALITY_IMAGES"] = "false"
+# If you are getting close to those run counts, tell Baris to top up the balance.
+os.environ["STORYAI_IMAGE_MODE"] = "default"
 
 subprocess.run([sys.executable, "-u", "-m", "app.main"], check=True)
 ```
@@ -74,12 +80,17 @@ StoryAI now uses these fixed models:
 
 The only simple switch is image generation:
 
-- Default / budget-friendly mode: `STORYAI_HIGH_QUALITY_IMAGES="false"`
+- Default / budget-friendly mode: `STORYAI_IMAGE_MODE="default"`
   - image model: `gpt-image-1.5`
   - image quality: `low`
   - rough cost: about `$0.06` per full story run
   - rough run count from about `$9.80` balance: about `150` runs
-- High-quality mode: `STORYAI_HIGH_QUALITY_IMAGES="true"`
+- Medium quality mode: `STORYAI_IMAGE_MODE="medium"`
+  - image model: `gpt-image-1.5`
+  - image quality: `medium`
+  - rough cost: about `$0.14` per full story run
+  - rough run count from about `$9.80` balance: about `70` runs
+- High-quality mode: `STORYAI_IMAGE_MODE="high"`
   - image model: `gpt-image-1.5`
   - image quality: `high`
   - rough cost: about `$0.43` per full story run
