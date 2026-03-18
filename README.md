@@ -24,20 +24,15 @@ Run the whole app from one Colab cell:
 ```python
 import os
 import shutil
-import subprocess
-import sys
 
 os.chdir("/content")
 shutil.rmtree("/content/storyai", ignore_errors=True)
-subprocess.run(
-    ["git", "clone", "https://github.com/aksakalai/storyai.git", "/content/storyai"],
-    check=True,
-)
+!git clone https://github.com/aksakalai/storyai.git /content/storyai
 os.chdir("/content/storyai")
-subprocess.run(["apt-get", "update"], check=True)
-subprocess.run(["apt-get", "install", "-y", "ffmpeg"], check=True)
-subprocess.run([sys.executable, "-m", "pip", "install", "-U", "pip"], check=True)
-subprocess.run([sys.executable, "-m", "pip", "install", "-r", "requirements.txt"], check=True)
+!apt-get update
+!apt-get install -y ffmpeg
+!pip install -U pip
+!pip install -r requirements.txt
 
 os.environ["OPENAI_API_KEY"] = "PASTE_YOUR_KEY_HERE"
 os.environ["STORYAI_SHARE"] = "true"
@@ -65,7 +60,7 @@ os.environ["STORYAI_SHARE"] = "true"
 # If you are getting close to those run counts, tell Baris to top up the balance.
 os.environ["STORYAI_IMAGE_MODE"] = "default"
 
-subprocess.run([sys.executable, "-u", "-m", "app.main"], check=True)
+!python -u -m app.main
 ```
 
 This keeps the repo clean while still letting you paste the API key directly into the Colab cell for private demo use.
