@@ -24,6 +24,7 @@ Run the whole app from one Colab cell:
 ```python
 import os
 import shutil
+from importlib import metadata
 
 os.chdir("/content")
 shutil.rmtree("/content/storyai", ignore_errors=True)
@@ -32,7 +33,29 @@ os.chdir("/content/storyai")
 !apt-get update
 !apt-get install -y ffmpeg
 !pip install -U pip
-!pip install --index-url https://download.pytorch.org/whl/cpu torch==2.8.0 torchaudio==2.8.0
+
+def version_or_none(package_name):
+    try:
+        return metadata.version(package_name)
+    except metadata.PackageNotFoundError:
+        return None
+
+torch_version = version_or_none("torch")
+torchaudio_version = version_or_none("torchaudio")
+needs_alignment_runtime = (
+    torch_version != "2.8.0" or torchaudio_version != "2.8.0"
+)
+
+print("torch:", torch_version)
+print("torchaudio:", torchaudio_version)
+print("install alignment runtime:", needs_alignment_runtime)
+
+if needs_alignment_runtime:
+    get_ipython().system(
+        "pip install --index-url https://download.pytorch.org/whl/cpu "
+        "torch==2.8.0 torchaudio==2.8.0"
+    )
+
 !pip install -r requirements.txt
 
 os.environ["OPENAI_API_KEY"] = "PASTE_YOUR_KEY_HERE"
@@ -67,7 +90,7 @@ os.environ["STORYAI_IMAGE_MODE"] = "default"
 
 This keeps the repo clean while still letting you paste the API key directly into the Colab cell for private demo use.
 The first generation in a fresh Colab runtime will also download the local alignment model once, so that run will start more slowly than the next ones.
-The PyTorch install line uses the CPU-only wheels on purpose, so Colab does not waste time replacing its environment with the large CUDA package set.
+The PyTorch install step checks the current versions first, then only installs the CPU-only wheels if the runtime is missing the compatible `2.8.0` pair.
 
 ### Simple quality switch
 
