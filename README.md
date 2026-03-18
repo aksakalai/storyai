@@ -32,6 +32,7 @@ os.chdir("/content/storyai")
 !apt-get update
 !apt-get install -y ffmpeg
 !pip install -U pip
+!pip install --index-url https://download.pytorch.org/whl/cpu torch==2.8.0 torchaudio==2.8.0
 !pip install -r requirements.txt
 
 os.environ["OPENAI_API_KEY"] = "PASTE_YOUR_KEY_HERE"
@@ -66,6 +67,7 @@ os.environ["STORYAI_IMAGE_MODE"] = "default"
 
 This keeps the repo clean while still letting you paste the API key directly into the Colab cell for private demo use.
 The first generation in a fresh Colab runtime will also download the local alignment model once, so that run will start more slowly than the next ones.
+The PyTorch install line uses the CPU-only wheels on purpose, so Colab does not waste time replacing its environment with the large CUDA package set.
 
 ### Simple quality switch
 
