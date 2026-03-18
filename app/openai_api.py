@@ -16,19 +16,79 @@ from .prompts import (
 from .schemas import StoryPackage
 
 
-DEFAULT_STORY_MODEL = os.getenv("STORYAI_STORY_MODEL", "gpt-4o-mini")
+DEFAULT_STORY_MODEL = os.getenv("STORYAI_STORY_MODEL", "gpt-5.4")
 DEFAULT_IMAGE_DETAIL = os.getenv("STORYAI_IMAGE_DETAIL", "low")
-DEFAULT_PAGE_IMAGE_MODEL = os.getenv("STORYAI_PAGE_IMAGE_MODEL", "gpt-image-1-mini")
 DEFAULT_PAGE_IMAGE_SIZE = os.getenv("STORYAI_PAGE_IMAGE_SIZE", "1024x1024")
-DEFAULT_PAGE_IMAGE_QUALITY = os.getenv("STORYAI_PAGE_IMAGE_QUALITY", "low")
+DEFAULT_PAGE_IMAGE_MODEL = "gpt-image-1.5"
+DEFAULT_PAGE_IMAGE_QUALITY = "low"
+HIGH_QUALITY_PAGE_IMAGE_MODEL = os.getenv(
+    "STORYAI_HIGH_QUALITY_PAGE_IMAGE_MODEL",
+    "gpt-image-1.5",
+)
+HIGH_QUALITY_PAGE_IMAGE_QUALITY = os.getenv(
+    "STORYAI_HIGH_QUALITY_PAGE_IMAGE_QUALITY",
+    "high",
+)
 DEFAULT_TTS_MODEL = os.getenv("STORYAI_TTS_MODEL", "gpt-4o-mini-tts")
 DEFAULT_TTS_VOICE = os.getenv("STORYAI_TTS_VOICE", "marin")
 DEFAULT_TTS_FORMAT = os.getenv("STORYAI_TTS_FORMAT", "wav")
-DEFAULT_TRANSCRIPTION_MODEL = os.getenv("STORYAI_TRANSCRIPTION_MODEL", "whisper-1")
+DEFAULT_TRANSCRIPTION_MODEL = os.getenv(
+    "STORYAI_TRANSCRIPTION_MODEL",
+    "gpt-4o-mini-transcribe",
+)
 DEFAULT_TRANSCRIPTION_RESPONSE_FORMAT = os.getenv(
     "STORYAI_TRANSCRIPTION_RESPONSE_FORMAT",
     "verbose_json",
 )
+
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    """Read a simple true/false style environment flag."""
+
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def resolve_page_image_settings(
+    model: str | None = None,
+    quality: str | None = None,
+) -> tuple[str, str]:
+    """Resolve image generation settings from a simple quality flag or explicit overrides."""
+
+    high_quality_images = _env_flag("STORYAI_HIGH_QUALITY_IMAGES", default=False)
+    profile_model = (
+        HIGH_QUALITY_PAGE_IMAGE_MODEL if high_quality_images else DEFAULT_PAGE_IMAGE_MODEL
+    )
+    profile_quality = (
+        HIGH_QUALITY_PAGE_IMAGE_QUALITY
+        if high_quality_images
+        else DEFAULT_PAGE_IMAGE_QUALITY
+    )
+
+    resolved_model = model or os.getenv("STORYAI_PAGE_IMAGE_MODEL") or profile_model
+    resolved_quality = (
+        quality or os.getenv("STORYAI_PAGE_IMAGE_QUALITY") or profile_quality
+    )
+    return resolved_model, resolved_quality
+
+
+def get_runtime_model_config() -> dict[str, str | bool]:
+    """Return the effective model configuration for logging and user guidance."""
+
+    image_model, image_quality = resolve_page_image_settings()
+    high_quality_images = _env_flag("STORYAI_HIGH_QUALITY_IMAGES", default=False)
+
+    return {
+        "story_model": DEFAULT_STORY_MODEL,
+        "image_model": image_model,
+        "image_quality": image_quality,
+        "image_mode": "high_quality" if high_quality_images else "default",
+        "high_quality_images": high_quality_images,
+        "tts_model": DEFAULT_TTS_MODEL,
+        "transcription_model": DEFAULT_TRANSCRIPTION_MODEL,
+    }
 
 
 def build_client(api_key: str | None = None) -> OpenAI:
@@ -116,27 +176,31 @@ def generate_page_image(
     visual_canon: str,
     page_prompt: str,
     output_path: Path,
-    model: str = DEFAULT_PAGE_IMAGE_MODEL,
+    model: str | None = None,
     size: str = DEFAULT_PAGE_IMAGE_SIZE,
-    quality: str = DEFAULT_PAGE_IMAGE_QUALITY,
+    quality: str | None = None,
 ) -> tuple[str, dict]:
     """Generate one page image and save it locally."""
 
+    resolved_model, resolved_quality = resolve_page_image_settings(
+        model=model,
+        quality=quality,
+    )
     final_prompt = build_page_image_prompt(visual_canon, page_prompt)
     request_payload = {
-        "model": model,
+        "model": resolved_model,
         "size": size,
-        "quality": quality,
+        "quality": resolved_quality,
         "output_path": str(output_path.resolve()),
         "prompt": final_prompt,
     }
     debug_print("IMAGE GENERATION REQUEST", request_payload)
 
     response = client.images.generate(
-        model=model,
+        model=resolved_model,
         prompt=final_prompt,
         size=size,
-        quality=quality,
+        quality=resolved_quality,
     )
 
     image_data = response.data[0]
@@ -151,8 +215,8 @@ def generate_page_image(
     response_summary = {
         "created": getattr(response, "created", None),
         "size": size,
-        "quality": quality,
-        "model": model,
+        "quality": resolved_quality,
+        "model": resolved_model,
         "output_image": summarize_path(output_path),
     }
     debug_print("IMAGE GENERATION RESPONSE", response_summary)

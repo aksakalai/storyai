@@ -5,6 +5,7 @@ import traceback
 import gradio as gr
 
 from .debug_utils import DEBUG_ENABLED, debug_print
+from .openai_api import get_runtime_model_config
 from .pipeline import DEFAULT_RUNS_DIR, run_story_package_pipeline
 
 
@@ -192,12 +193,22 @@ def launch_app() -> None:
     """Launch the app with sensible defaults for Colab and local runs."""
 
     demo = build_demo()
+    model_config = get_runtime_model_config()
     share = os.getenv("STORYAI_SHARE")
     should_share = share.lower() == "true" if share else "COLAB_RELEASE_TAG" in os.environ
 
     print("Starting StoryAI...", flush=True)
     print(f"Share link enabled: {should_share}", flush=True)
     print(f"Artifacts directory: {DEFAULT_RUNS_DIR.resolve()}", flush=True)
+    print(
+        "Image mode: "
+        f"{model_config['image_mode']} "
+        f"({model_config['image_model']}, quality={model_config['image_quality']})",
+        flush=True,
+    )
+    print(f"Story model: {model_config['story_model']}", flush=True)
+    print(f"TTS model: {model_config['tts_model']}", flush=True)
+    print(f"Transcription model: {model_config['transcription_model']}", flush=True)
     print(f"Terminal debug logging: {DEBUG_ENABLED}", flush=True)
 
     demo.queue(default_concurrency_limit=1)

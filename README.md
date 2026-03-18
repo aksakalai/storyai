@@ -42,10 +42,50 @@ subprocess.run([sys.executable, "-m", "pip", "install", "-r", "requirements.txt"
 os.environ["OPENAI_API_KEY"] = "PASTE_YOUR_KEY_HERE"
 os.environ["STORYAI_SHARE"] = "true"
 
+# Image quality switch for non-coders:
+# - "false" = Default / budget-friendly mode
+#   Uses GPT Image 1.5 at low quality.
+#   Roughly about $0.06 per full story run.
+#   With a balance of about $9.80, that is roughly about 150 full runs.
+#
+# - "true" = High-quality mode
+#   Uses GPT Image 1.5 at high quality.
+#   Roughly about $0.43 per full story run.
+#   With a balance of about $9.80, that is roughly about 22 full runs.
+#
+# Only the image generation changes between these two modes.
+# The story model, narration model, and transcription model stay fixed.
+# Use high-quality mode when presenting the project live or recording a demo.
+# Use the default mode for normal testing so the balance lasts much longer.
+os.environ["STORYAI_HIGH_QUALITY_IMAGES"] = "false"
+
 subprocess.run([sys.executable, "-u", "-m", "app.main"], check=True)
 ```
 
 This keeps the repo clean while still letting you paste the API key directly into the Colab cell for private demo use.
+
+### Simple quality switch
+
+StoryAI now uses these fixed models:
+
+- story: `gpt-5.4`
+- narration: `gpt-4o-mini-tts`
+- transcription: `gpt-4o-mini-transcribe`
+
+The only simple switch is image generation:
+
+- Default / budget-friendly mode: `STORYAI_HIGH_QUALITY_IMAGES="false"`
+  - image model: `gpt-image-1.5`
+  - image quality: `low`
+  - rough cost: about `$0.06` per full story run
+  - rough run count from about `$9.80` balance: about `150` runs
+- High-quality mode: `STORYAI_HIGH_QUALITY_IMAGES="true"`
+  - image model: `gpt-image-1.5`
+  - image quality: `high`
+  - rough cost: about `$0.43` per full story run
+  - rough run count from about `$9.80` balance: about `22` runs
+
+These are rough planning numbers based on the current OpenAI pricing as of March 18, 2026 and a typical StoryAI run with about 1.5 minutes of total narration. Longer stories will cost a bit more. If you are getting close to those run counts, top up the balance before continuing.
 
 ## Local layout
 
