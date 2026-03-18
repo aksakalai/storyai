@@ -102,7 +102,6 @@ def _format_generation_outputs(result: dict) -> tuple:
     return (
         synced_image_path,
         result["final_video_path"],
-        f'Your story "{story.title}" is ready.',
         result["working_image"],
         story.title,
         story.visual_canon,
@@ -141,7 +140,6 @@ def _format_generation_outputs(result: dict) -> tuple:
 
 def _empty_generation_outputs(
     synced_image_path: str,
-    story_status: str,
     run_status: str,
 ) -> tuple:
     """Clear the visible results before a new story run starts."""
@@ -149,7 +147,6 @@ def _empty_generation_outputs(
     return (
         synced_image_path,
         None,
-        story_status,
         None,
         "",
         "",
@@ -194,7 +191,6 @@ def generate_story_from_child(
 
     yield _empty_generation_outputs(
         synced_image_path=image_path,
-        story_status="Creating your story...",
         run_status="Preparing a new run...",
     )
     yield _format_generation_outputs(
@@ -210,7 +206,6 @@ def generate_story_from_parent(
 
     yield _empty_generation_outputs(
         synced_image_path=image_path,
-        story_status="Generating a fresh story...",
         run_status="Preparing a new run...",
     )
     yield _format_generation_outputs(
@@ -241,7 +236,6 @@ def build_demo() -> gr.Blocks:
                     type="filepath",
                     label="Child drawing",
                 )
-                child_status = gr.Textbox(label="Story status", interactive=False)
                 child_final_video = gr.Video(label="Story video")
 
             with gr.Tab("Parent Mode", render_children=True):
@@ -329,7 +323,6 @@ def build_demo() -> gr.Blocks:
 
         shared_outputs = [
             child_final_video,
-            child_status,
             working_image,
             title_output,
             visual_canon_output,
