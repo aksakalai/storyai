@@ -22,6 +22,7 @@ from .openai_api import (
     transcribe_audio_with_word_timestamps,
 )
 from .schemas import StoryPackage
+from .text_utils import sanitize_narration_text
 from .video import concatenate_page_videos, render_page_video
 
 
@@ -30,9 +31,21 @@ MAX_IMAGE_SIZE = 1536
 ProgressCallback = Callable[[float, str], None]
 
 
+def _clear_previous_runs(base_dir: Path = DEFAULT_RUNS_DIR) -> None:
+    """Remove previous run directories so the latest upload owns the output area."""
+
+    if not base_dir.exists():
+        return
+
+    for child in base_dir.iterdir():
+        if child.is_dir():
+            shutil.rmtree(child, ignore_errors=True)
+
+
 def _new_run_dir(base_dir: Path = DEFAULT_RUNS_DIR) -> Path:
     """Create a timestamped artifact directory for one app run."""
 
+    base_dir.mkdir(parents=True, exist_ok=True)
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     run_dir = base_dir / f"{timestamp}_{uuid4().hex[:8]}"
     run_dir.mkdir(parents=True, exist_ok=False)
@@ -72,6 +85,7 @@ def run_story_package_pipeline(
         raise FileNotFoundError(f"Uploaded image not found: {source_path}")
 
     _report_progress(progress_callback, 0.02, "Preparing your drawing")
+    _clear_previous_runs()
     run_dir = _new_run_dir()
     copied_input_path = run_dir / f"input_image{source_path.suffix.lower() or '.png'}"
     working_image_path = run_dir / "working_image.png"
@@ -253,16 +267,18 @@ def _generate_page_audio(
             progress_value,
             f"Recording narration {index} of {total_pages}",
         )
+        narration_text = sanitize_narration_text(story_part.text) or story_part.text.strip()
         output_path = run_dir / f"{page_name}_audio.wav"
         response_summary = synthesize_narration(
             client=client,
-            text=story_part.text,
+            text=narration_text,
             output_path=output_path,
         )
         generated_audio.append(
             {
                 "page": page_name,
                 "story_text": story_part.text,
+                "narration_text": narration_text,
                 "audio_path": str(output_path.resolve()),
                 "response": response_summary,
             }
@@ -296,9 +312,10 @@ def _generate_page_timestamps(
         raw_response = transcribe_audio_with_word_timestamps(
             client=client,
             audio_path=audio_path,
-            expected_text=page_audio_item["story_text"],
+            expected_text=page_audio_item["narration_text"],
         )
         _write_json(output_path, raw_response)
+        validation = raw_response.get("storyai_validation", {}) or {}
 
         generated_timestamps.append(
             {
@@ -306,10 +323,17 @@ def _generate_page_timestamps(
                 "audio_path": str(audio_path.resolve()),
                 "timestamps_path": str(output_path.resolve()),
                 "story_text": page_audio_item["story_text"],
+                "narration_text": page_audio_item["narration_text"],
                 "text": raw_response.get("text", ""),
                 "words": raw_response.get("words", []) or [],
                 "segments": raw_response.get("segments", []) or [],
                 "duration_seconds": raw_response.get("duration"),
+                "validation": validation,
+                "usable_for_word_highlight": validation.get(
+                    "usable_for_word_highlight",
+                    False,
+                ),
+                "fallback_reason": validation.get("fallback_reason"),
             }
         )
 
@@ -345,23 +369,31 @@ def _render_page_videos(
         audio_item = audio_by_page[page_name]
         timestamp_item = timestamps_by_page[page_name]
         output_path = run_dir / f"{page_name}.mp4"
+        audio_duration = (
+            audio_item.get("response", {})
+            .get("output_audio", {})
+            .get("duration_seconds")
+        )
         render_summary = render_page_video(
             image_path=Path(image_item["image_path"]),
             audio_path=Path(audio_item["audio_path"]),
-            story_text=audio_item["story_text"],
+            story_text=audio_item["narration_text"],
             words=timestamp_item["words"],
-            duration_seconds=float(timestamp_item["duration_seconds"] or 0.0),
+            duration_seconds=float(timestamp_item["duration_seconds"] or audio_duration or 0.0),
             output_path=output_path,
         )
         page_videos.append(
             {
                 "page": page_name,
                 "story_text": audio_item["story_text"],
+                "narration_text": audio_item["narration_text"],
                 "image_path": image_item["image_path"],
                 "audio_path": audio_item["audio_path"],
                 "timestamps_path": timestamp_item["timestamps_path"],
                 "subtitle_script_path": render_summary["subtitle_script_path"],
                 "video_path": render_summary["video_path"],
+                "subtitle_mode": render_summary["response"]["subtitle_mode"],
+                "fallback_reason": render_summary["response"].get("fallback_reason"),
                 "response": render_summary["response"],
             }
         )

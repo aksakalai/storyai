@@ -15,7 +15,7 @@ The app does one full run:
 - generate 3 page images
 - generate 3 narration clips
 - transcribe each narration clip with `whisper-1` word timestamps
-- render 3 page videos with persistent word highlighting
+- render 3 page videos with exact word highlighting when safe, or static text fallback when timing proof is not exact
 - concatenate the 3 clips into one final story video
 - save all artifacts locally
 - show the story, images, audio, timestamps, and final video in the Gradio UI
@@ -90,12 +90,12 @@ Each run writes:
 - `page_1_audio.wav`
 - `page_2_audio.wav`
 - `page_3_audio.wav`
-- `page_1_timestamps.json`
-- `page_2_timestamps.json`
-- `page_3_timestamps.json`
 - `page_1_subtitles.ass`
 - `page_2_subtitles.ass`
 - `page_3_subtitles.ass`
+- `page_1_timestamps.json`
+- `page_2_timestamps.json`
+- `page_3_timestamps.json`
 - `page_1_prompt.txt`
 - `page_2_prompt.txt`
 - `page_3_prompt.txt`

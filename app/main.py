@@ -79,6 +79,16 @@ def _run_generation(
         RUN_LOCK.release()
 
 
+def _format_subtitle_status(page_video: dict) -> str:
+    """Format one subtitle mode label for the parent inspector."""
+
+    subtitle_mode = page_video["subtitle_mode"]
+    fallback_reason = page_video.get("fallback_reason")
+    if fallback_reason:
+        return f"{subtitle_mode} ({fallback_reason})"
+    return subtitle_mode
+
+
 def _format_generation_outputs(result: dict) -> tuple:
     """Format pipeline results for both the child and parent views."""
 
@@ -86,6 +96,7 @@ def _format_generation_outputs(result: dict) -> tuple:
     page_images = result["page_images"]
     page_audio = result["page_audio"]
     page_timestamps = result["page_timestamps"]
+    page_videos = result["page_videos"]
     synced_image_path = result["input_image"]
 
     return (
@@ -104,21 +115,74 @@ def _format_generation_outputs(result: dict) -> tuple:
         page_images[0]["image_path"],
         page_images[0]["final_prompt"],
         page_audio[0]["audio_path"],
+        page_audio[0]["narration_text"],
         page_timestamps[0]["text"],
         page_timestamps[0]["words"],
+        _format_subtitle_status(page_videos[0]),
         page_images[1]["image_path"],
         page_images[1]["final_prompt"],
         page_audio[1]["audio_path"],
+        page_audio[1]["narration_text"],
         page_timestamps[1]["text"],
         page_timestamps[1]["words"],
+        _format_subtitle_status(page_videos[1]),
         page_images[2]["image_path"],
         page_images[2]["final_prompt"],
         page_audio[2]["audio_path"],
+        page_audio[2]["narration_text"],
         page_timestamps[2]["text"],
         page_timestamps[2]["words"],
+        _format_subtitle_status(page_videos[2]),
         story.model_dump(mode="json"),
         result["final_video_path"],
         f"Artifacts saved to {result['run_dir']}",
+    )
+
+
+def _empty_generation_outputs(
+    synced_image_path: str,
+    story_status: str,
+    run_status: str,
+) -> tuple:
+    """Clear the visible results before a new story run starts."""
+
+    return (
+        synced_image_path,
+        None,
+        story_status,
+        None,
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        "",
+        None,
+        "",
+        None,
+        "",
+        "",
+        "",
+        "",
+        None,
+        "",
+        None,
+        "",
+        "",
+        "",
+        "",
+        None,
+        "",
+        None,
+        "",
+        "",
+        "",
+        "",
+        None,
+        None,
+        run_status,
     )
 
 
@@ -128,7 +192,12 @@ def generate_story_from_child(
 ):
     """Auto-run the child flow after an upload and sync the parent inspector."""
 
-    return _format_generation_outputs(
+    yield _empty_generation_outputs(
+        synced_image_path=image_path,
+        story_status="Creating your story...",
+        run_status="Preparing a new run...",
+    )
+    yield _format_generation_outputs(
         _run_generation(image_path, progress=progress, source="child_mode")
     )
 
@@ -139,7 +208,12 @@ def generate_story_from_parent(
 ):
     """Run the parent/debug flow and sync the child-facing result view."""
 
-    return _format_generation_outputs(
+    yield _empty_generation_outputs(
+        synced_image_path=image_path,
+        story_status="Generating a fresh story...",
+        run_status="Preparing a new run...",
+    )
+    yield _format_generation_outputs(
         _run_generation(image_path, progress=progress, source="parent_mode")
     )
 
@@ -204,11 +278,16 @@ def build_demo() -> gr.Blocks:
                             lines=9,
                         )
                         page_1_audio = gr.Audio(label="Page 1 narration")
+                        page_1_narration_text = gr.Textbox(
+                            label="Page 1 spoken narration text",
+                            lines=5,
+                        )
                         page_1_transcript = gr.Textbox(
                             label="Page 1 transcript",
                             lines=5,
                         )
                         page_1_words = gr.JSON(label="Page 1 word timestamps")
+                        page_1_subtitle_mode = gr.Textbox(label="Page 1 subtitle mode")
 
                     with gr.Tab("Page 2"):
                         page_2_image = gr.Image(label="Page 2 image")
@@ -217,11 +296,16 @@ def build_demo() -> gr.Blocks:
                             lines=9,
                         )
                         page_2_audio = gr.Audio(label="Page 2 narration")
+                        page_2_narration_text = gr.Textbox(
+                            label="Page 2 spoken narration text",
+                            lines=5,
+                        )
                         page_2_transcript = gr.Textbox(
                             label="Page 2 transcript",
                             lines=5,
                         )
                         page_2_words = gr.JSON(label="Page 2 word timestamps")
+                        page_2_subtitle_mode = gr.Textbox(label="Page 2 subtitle mode")
 
                     with gr.Tab("Page 3"):
                         page_3_image = gr.Image(label="Page 3 image")
@@ -230,11 +314,16 @@ def build_demo() -> gr.Blocks:
                             lines=9,
                         )
                         page_3_audio = gr.Audio(label="Page 3 narration")
+                        page_3_narration_text = gr.Textbox(
+                            label="Page 3 spoken narration text",
+                            lines=5,
+                        )
                         page_3_transcript = gr.Textbox(
                             label="Page 3 transcript",
                             lines=5,
                         )
                         page_3_words = gr.JSON(label="Page 3 word timestamps")
+                        page_3_subtitle_mode = gr.Textbox(label="Page 3 subtitle mode")
 
                 final_video = gr.Video(label="Final story video")
 
@@ -253,24 +342,30 @@ def build_demo() -> gr.Blocks:
             page_1_image,
             page_1_final_prompt,
             page_1_audio,
+            page_1_narration_text,
             page_1_transcript,
             page_1_words,
+            page_1_subtitle_mode,
             page_2_image,
             page_2_final_prompt,
             page_2_audio,
+            page_2_narration_text,
             page_2_transcript,
             page_2_words,
+            page_2_subtitle_mode,
             page_3_image,
             page_3_final_prompt,
             page_3_audio,
+            page_3_narration_text,
             page_3_transcript,
             page_3_words,
+            page_3_subtitle_mode,
             story_json,
             final_video,
             status_output,
         ]
 
-        child_image_input.input(
+        child_image_input.upload(
             fn=generate_story_from_child,
             inputs=[child_image_input],
             outputs=[parent_image_input, *shared_outputs],

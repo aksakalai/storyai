@@ -9,6 +9,7 @@ Story rules:
 - part_3 resolves the story in a calm, comforting way.
 - Keep the tone soft, safe, and bedtime-friendly.
 - Keep visual_canon lightweight and practical for consistent illustrations.
+- Prefer plain, subtitle-friendly punctuation and avoid hyphenated compounds when simple wording works.
 - Do not use copyrighted characters or brand names.
 """
 

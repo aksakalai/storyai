@@ -1,12 +1,11 @@
 import os
-import re
 import shutil
 import subprocess
-import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 
 from .debug_utils import debug_print, summarize_path
+from .text_utils import normalize_alignment_token, sanitize_narration_text
 
 
 VIDEO_WIDTH = 1024
@@ -182,6 +181,8 @@ def render_page_video(
         "line_count": subtitle_summary["line_count"],
         "event_count": subtitle_summary["event_count"],
         "font_size": subtitle_summary["font_size"],
+        "subtitle_mode": subtitle_summary["subtitle_mode"],
+        "fallback_reason": subtitle_summary["fallback_reason"],
         "story_card": {
             "x": CARD_X,
             "y": card_y,
@@ -261,9 +262,20 @@ def write_highlighted_subtitles(
 ) -> dict:
     """Write an ASS subtitle file with persistent storybook highlighting."""
 
-    aligned_tokens = _align_story_tokens(story_text, words, duration_seconds)
-    layout = _choose_subtitle_layout(aligned_tokens)
-    events = _build_subtitle_events(aligned_tokens, duration_seconds)
+    aligned_tokens, fallback_reason = _align_story_tokens(
+        story_text,
+        words,
+        duration_seconds,
+    )
+    if aligned_tokens is None:
+        subtitle_mode = "static_text_fallback"
+        aligned_tokens = _build_static_tokens(story_text, duration_seconds)
+        layout = _choose_subtitle_layout(aligned_tokens)
+        events = _build_static_subtitle_events(aligned_tokens, duration_seconds)
+    else:
+        subtitle_mode = "word_highlight"
+        layout = _choose_subtitle_layout(aligned_tokens)
+        events = _build_subtitle_events(aligned_tokens, duration_seconds)
 
     script = _build_ass_script(
         aligned_tokens=aligned_tokens,
@@ -281,6 +293,8 @@ def write_highlighted_subtitles(
         "card_height": layout.card_height,
         "card_y": layout.card_y,
         "duration_seconds": round(duration_seconds, 3),
+        "subtitle_mode": subtitle_mode,
+        "fallback_reason": fallback_reason,
     }
     debug_print("SUBTITLE SCRIPT", response_summary)
     return response_summary
@@ -301,12 +315,12 @@ def _align_story_tokens(
     story_text: str,
     words: list[dict],
     duration_seconds: float,
-) -> list[AlignedToken]:
-    """Map the original story text onto Whisper word timings exactly."""
+) -> tuple[list[AlignedToken] | None, str | None]:
+    """Map sanitized story text onto Whisper word timings when exact proof exists."""
 
-    display_tokens = [token for token in story_text.split() if token]
+    display_tokens = _display_story_tokens(story_text)
     if not display_tokens:
-        return []
+        return None, "empty_story_text"
 
     normalized_story_tokens = [_normalize_for_timing(token) for token in display_tokens]
     normalized_story_tokens = [token for token in normalized_story_tokens if token]
@@ -319,7 +333,7 @@ def _align_story_tokens(
     normalized_words = [normalized_word for normalized_word, _ in timed_words]
 
     if len(normalized_story_tokens) != len(normalized_words):
-        raise RuntimeError("Story text and transcription word counts did not match.")
+        return None, "word_count_mismatch"
 
     previous_end = 0.0
     aligned_tokens: list[AlignedToken] = []
@@ -327,9 +341,9 @@ def _align_story_tokens(
     for index, token in enumerate(display_tokens):
         normalized_token = _normalize_for_timing(token)
         if not normalized_token:
-            raise RuntimeError("Story text contained a token that could not be timed.")
+            return None, "token_normalization_failed"
         if normalized_token != normalized_words[index]:
-            raise RuntimeError("Story text and transcription tokens did not match exactly.")
+            return None, "token_mismatch"
 
         matched_word = timed_words[index][1]
 
@@ -348,7 +362,39 @@ def _align_story_tokens(
         aligned_tokens.append(AlignedToken(text=token, start=start, end=end))
 
     _fill_missing_timing_gaps(aligned_tokens, duration_seconds)
-    return aligned_tokens
+    return aligned_tokens, None
+
+
+def _build_static_tokens(
+    story_text: str,
+    duration_seconds: float,
+) -> list[AlignedToken]:
+    """Create tokens for static subtitle fallback without word-level timing."""
+
+    fallback_end = max(duration_seconds, MIN_WORD_DURATION)
+    return [
+        AlignedToken(text=token, start=0.0, end=fallback_end)
+        for token in _display_story_tokens(story_text)
+    ]
+
+
+def _build_static_subtitle_events(
+    tokens: list[AlignedToken],
+    duration_seconds: float,
+) -> list[SubtitleEvent]:
+    """Render one full-page subtitle event when exact highlighting is not safe."""
+
+    if not tokens:
+        return []
+
+    return [
+        SubtitleEvent(
+            start=0.0,
+            end=max(duration_seconds, MIN_WORD_DURATION),
+            current_index=None,
+            completed_index=len(tokens) - 1,
+        )
+    ]
 
 
 def _fill_missing_timing_gaps(
@@ -650,8 +696,16 @@ def _format_ass_timestamp(value: float) -> str:
     return f"{hours}:{minutes:02d}:{seconds:02d}.{centiseconds:02d}"
 
 
+def _display_story_tokens(story_text: str) -> list[str]:
+    """Split sanitized subtitle-safe story text into visible display tokens."""
+
+    return [token for token in sanitize_narration_text(story_text).split() if token]
+
+
 def _normalize_for_timing(text: str) -> str:
     """Normalize token text so story words match transcription words exactly."""
+
+    return normalize_alignment_token(text)
 
     normalized = unicodedata.normalize("NFKC", text).lower()
     normalized = normalized.translate(

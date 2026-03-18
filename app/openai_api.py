@@ -2,8 +2,6 @@ import base64
 import json
 import mimetypes
 import os
-import re
-import unicodedata
 from pathlib import Path
 
 from openai import OpenAI
@@ -16,6 +14,7 @@ from .prompts import (
     build_page_image_prompt,
 )
 from .schemas import StoryPackage
+from .text_utils import summarize_token_alignment
 
 
 DEFAULT_STORY_MODEL = os.getenv("STORYAI_STORY_MODEL", "gpt-5.4")
@@ -324,7 +323,13 @@ def transcribe_audio_with_word_timestamps(
         )
 
     raw_response = _to_jsonable(response)
-    _validate_transcription(raw_response, expected_text=expected_text)
+    words = raw_response.get("words", []) or []
+    validation = summarize_token_alignment(
+        expected_text=expected_text,
+        transcript_text=str(raw_response.get("text", "") or ""),
+        words=words,
+    )
+    raw_response["storyai_validation"] = validation
 
     debug_print(
         "TRANSCRIPTION RESPONSE SUMMARY",
@@ -334,55 +339,15 @@ def transcribe_audio_with_word_timestamps(
             "language": raw_response.get("language"),
             "duration": raw_response.get("duration"),
             "text": raw_response.get("text"),
-            "word_count": len(raw_response.get("words", []) or []),
+            "word_count": len(words),
             "segment_count": len(raw_response.get("segments", []) or []),
+            "usable_for_word_highlight": validation["usable_for_word_highlight"],
+            "fallback_reason": validation["fallback_reason"],
         },
     )
     debug_print("RAW TRANSCRIPTION RESPONSE", raw_response)
 
     return raw_response
-
-
-def _validate_transcription(raw_response: dict, expected_text: str) -> None:
-    """Require usable word timings and an exact normalized text match."""
-
-    words = raw_response.get("words", []) or []
-    if not words:
-        raise RuntimeError("Transcription did not return any word timestamps.")
-
-    expected_tokens = _normalize_transcript_tokens(expected_text)
-    if not expected_tokens:
-        raise RuntimeError("Story text did not contain any tokens for transcription validation.")
-
-    transcript_text = str(raw_response.get("text", "") or "")
-    transcript_tokens = _normalize_transcript_tokens(transcript_text)
-    word_tokens = _normalize_transcript_tokens(
-        " ".join(str(word.get("word", "") or "") for word in words)
-    )
-
-    if word_tokens != expected_tokens and transcript_tokens != expected_tokens:
-        raise RuntimeError("Transcription did not match the expected story text exactly.")
-
-
-def _normalize_transcript_tokens(text: str) -> list[str]:
-    """Normalize text into lowercase word tokens for strict transcript checks."""
-
-    normalized = unicodedata.normalize("NFKC", text).lower()
-    normalized = normalized.replace("\u2019", "'")
-    normalized = normalized.replace("\u2018", "'")
-    normalized = normalized.replace("\u201c", '"')
-    normalized = normalized.replace("\u201d", '"')
-    normalized = normalized.replace("\u2014", " ")
-    normalized = normalized.replace("\u2013", " ")
-    normalized = normalized.replace("-", " ")
-
-    tokens: list[str] = []
-    for raw_token in normalized.split():
-        cleaned = re.sub(r"^[^\w']+|[^\w']+$", "", raw_token)
-        cleaned = re.sub(r"[^a-z0-9']+", "", cleaned)
-        if cleaned:
-            tokens.append(cleaned)
-    return tokens
 
 
 def _to_jsonable(value) -> dict:
