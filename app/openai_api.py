@@ -109,7 +109,7 @@ def get_runtime_model_config() -> dict[str, str | bool]:
         "high_quality_images": image_mode == "high",
         "tts_model": DEFAULT_TTS_MODEL,
         "timing_engine": alignment_config["timing_engine"],
-        "alignment_bundle": alignment_config["alignment_bundle"],
+        "alignment_model": alignment_config["alignment_model"],
     }
 
 

@@ -1,295 +1,261 @@
+import json
 import os
-import re
-import unicodedata
-from dataclasses import dataclass
+import subprocess
+import sys
 from pathlib import Path
 
 from .debug_utils import debug_print, summarize_wav_audio
 
 
-DEFAULT_ALIGNMENT_BUNDLE = os.getenv(
-    "STORYAI_ALIGNMENT_BUNDLE",
-    "WAV2VEC2_ASR_BASE_960H",
+DEFAULT_ALIGNMENT_ENGINE = "nemo_forced_aligner"
+DEFAULT_NEMO_MODEL = os.getenv(
+    "STORYAI_NEMO_MODEL",
+    "stt_en_citrinet_256_gamma_0_25",
 )
-_ALIGNMENT_MODEL_CACHE: dict[tuple[str, str], tuple[object, object, dict[str, int]]] = {}
-
-
-@dataclass
-class StoryToken:
-    """One displayed story token and the normalized alignment words it maps to."""
-
-    original_text: str
-    normalized_words: list[str]
+DEFAULT_NEMO_REPO = Path(os.getenv("STORYAI_NEMO_REPO", "/content/NeMo"))
+DEFAULT_NEMO_ALIGN_SCRIPT = os.getenv(
+    "STORYAI_NEMO_ALIGN_SCRIPT",
+    str(DEFAULT_NEMO_REPO / "tools" / "nemo_forced_aligner" / "align.py"),
+)
 
 
 def get_alignment_runtime_config() -> dict[str, str]:
     """Return the currently configured local word-alignment backend."""
 
     return {
-        "timing_engine": "local_forced_alignment",
-        "alignment_bundle": DEFAULT_ALIGNMENT_BUNDLE,
+        "timing_engine": DEFAULT_ALIGNMENT_ENGINE,
+        "alignment_model": DEFAULT_NEMO_MODEL,
     }
 
 
-def align_story_text_to_audio(
-    audio_path: Path,
-    story_text: str,
-    bundle_name: str = DEFAULT_ALIGNMENT_BUNDLE,
-) -> dict:
-    """Align a known story transcript to generated narration audio."""
+def align_story_audio_batch(page_audio: list[dict], run_dir: Path) -> dict[str, dict]:
+    """Align all page narration clips in one NeMo batch run."""
 
-    torch, torchaudio = _load_alignment_dependencies()
-    bundle, model, token_dictionary = _load_alignment_bundle(
-        torch=torch,
-        torchaudio=torchaudio,
-        bundle_name=bundle_name,
-    )
-    device = _resolve_alignment_device(torch)
+    if not page_audio:
+        return {}
 
-    waveform, sample_rate = torchaudio.load(str(audio_path))
-    if waveform.ndim != 2:
-        raise RuntimeError(
-            f"Unexpected audio shape for forced alignment: {tuple(waveform.shape)}"
-        )
-    if waveform.size(0) > 1:
-        waveform = waveform.mean(dim=0, keepdim=True)
-    if sample_rate != bundle.sample_rate:
-        waveform = torchaudio.functional.resample(
-            waveform,
-            sample_rate,
-            bundle.sample_rate,
-        )
-        sample_rate = bundle.sample_rate
-
-    story_tokens = _build_story_token_map(story_text)
-    normalized_words = [word for token in story_tokens for word in token.normalized_words]
-    if not normalized_words:
-        raise RuntimeError("Story text did not contain any alignable words.")
-
-    unknown_characters = sorted(
-        {
-            character
-            for word in normalized_words
-            for character in word
-            if character not in token_dictionary
-        }
-    )
-    if unknown_characters:
-        raise RuntimeError(
-            "Forced alignment cannot tokenize these characters: "
-            f"{''.join(unknown_characters)!r}"
-        )
-
-    flattened_targets = [
-        token_dictionary[character]
-        for word in normalized_words
-        for character in word
-    ]
-    if not flattened_targets:
-        raise RuntimeError("Forced alignment target sequence is empty.")
-
-    request_payload = {
-        "audio": summarize_wav_audio(audio_path),
-        "story_text": story_text,
-        "normalized_words": normalized_words,
-        "bundle": bundle_name,
-        "device": str(device),
-    }
-    debug_print("ALIGNMENT REQUEST", request_payload)
-
-    with torch.inference_mode():
-        emission, _ = model(waveform.to(device))
-        targets = torch.tensor([flattened_targets], dtype=torch.int32, device=device)
-        input_lengths = torch.tensor([emission.size(1)], dtype=torch.int32, device=device)
-        target_lengths = torch.tensor([len(flattened_targets)], dtype=torch.int32, device=device)
-        aligned_tokens, alignment_scores = torchaudio.functional.forced_align(
-            emission,
-            targets,
-            input_lengths=input_lengths,
-            target_lengths=target_lengths,
-            blank=token_dictionary["-"],
-        )
-        token_spans = torchaudio.functional.merge_tokens(
-            aligned_tokens[0].cpu(),
-            alignment_scores[0].cpu(),
-            blank=token_dictionary["-"],
-        )
-
-    per_word_spans = _unflatten(
-        token_spans,
-        [len(word) for word in normalized_words],
-    )
-    if len(per_word_spans) != len(normalized_words):
-        raise RuntimeError(
-            "Forced alignment returned an unexpected number of word spans: "
-            f"expected {len(normalized_words)}, got {len(per_word_spans)}."
-        )
-
-    duration_seconds = waveform.size(1) / sample_rate if sample_rate else 0.0
-    frame_ratio = duration_seconds / emission.size(1) if emission.size(1) else 0.0
-
-    words = []
-    span_index = 0
-    for token in story_tokens:
-        piece_count = len(token.normalized_words)
-        if piece_count == 0:
-            continue
-
-        piece_spans = per_word_spans[span_index : span_index + piece_count]
-        span_index += piece_count
-        if not piece_spans or not all(piece_spans):
-            raise RuntimeError(
-                f"Forced alignment failed to produce spans for token: {token.original_text!r}"
-            )
-
-        first_span = piece_spans[0][0]
-        last_span = piece_spans[-1][-1]
-        words.append(
+    manifest_path = run_dir / "nemo_alignment_manifest.jsonl"
+    output_dir = run_dir / "nemo_alignment"
+    manifest_entries = []
+    for item in page_audio:
+        audio_path = Path(item["audio_path"]).resolve()
+        manifest_entries.append(
             {
-                "word": token.original_text,
-                "normalized_word": " ".join(token.normalized_words),
-                "start": round(first_span.start * frame_ratio, 3),
-                "end": round(last_span.end * frame_ratio, 3),
-                "score": round(_score_alignment(piece_spans), 4),
-                "source": "local_forced_alignment",
+                "audio_filepath": str(audio_path),
+                "text": item["story_text"],
             }
         )
 
-    response = {
-        "text": story_text,
-        "words": words,
-        "segments": [],
-        "duration": round(duration_seconds, 3),
-        "timing_engine": "local_forced_alignment",
-        "alignment_bundle": bundle_name,
-    }
+    _write_manifest(manifest_path, manifest_entries)
+    _run_nemo_forced_aligner(
+        manifest_path=manifest_path,
+        output_dir=output_dir,
+        batch_size=len(page_audio),
+    )
+
+    raw_results = _read_nemo_output_manifest(manifest_path, output_dir)
+    aligned_pages: dict[str, dict] = {}
+    for item in page_audio:
+        audio_key = str(Path(item["audio_path"]).resolve())
+        if audio_key not in raw_results:
+            raise RuntimeError(
+                "NeMo Forced Aligner did not return output for audio file: "
+                f"{audio_key}"
+            )
+        result = raw_results[audio_key]
+        word_ctm_path = Path(result["word_level_ctm_filepath"])
+        aligned_pages[audio_key] = {
+            "text": item["story_text"],
+            "words": _parse_word_ctm(word_ctm_path),
+            "segments": [],
+            "duration": summarize_wav_audio(audio_key).get("duration_seconds"),
+            "timing_engine": DEFAULT_ALIGNMENT_ENGINE,
+            "alignment_model": DEFAULT_NEMO_MODEL,
+            "nemo_output_manifest_path": str(
+                (output_dir / f"{manifest_path.stem}_with_output_file_paths.json").resolve()
+            ),
+            "word_level_ctm_filepath": str(word_ctm_path.resolve()),
+            "segment_level_ctm_filepath": result.get("segment_level_ctm_filepath"),
+            "token_level_ctm_filepath": result.get("token_level_ctm_filepath"),
+        }
+
     debug_print(
-        "ALIGNMENT RESPONSE",
+        "ALIGNMENT BATCH RESPONSE",
         {
-            "word_count": len(words),
-            "duration_seconds": response["duration"],
-            "bundle": bundle_name,
-            "device": str(device),
+            "page_count": len(aligned_pages),
+            "output_dir": str(output_dir.resolve()),
+            "model": DEFAULT_NEMO_MODEL,
         },
     )
-    debug_print("ALIGNMENT WORDS", words)
-    return response
+    return aligned_pages
 
 
-def _load_alignment_dependencies():
-    """Import alignment dependencies only when the timing step runs."""
+def _write_manifest(manifest_path: Path, entries: list[dict]) -> None:
+    """Write the NeMo alignment manifest as JSONL."""
 
-    try:
-        import torch
-        import torchaudio
-    except ImportError as exc:
-        raise RuntimeError(
-            "Local forced alignment requires torch and torchaudio. "
-            "Install the repo requirements in Colab before launching the app."
-        ) from exc
-    return torch, torchaudio
-
-
-def _resolve_alignment_device(torch) -> object:
-    """Choose the alignment device with an optional environment override."""
-
-    configured = os.getenv("STORYAI_ALIGNMENT_DEVICE")
-    if configured:
-        return torch.device(configured)
-    return torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-
-def _load_alignment_bundle(torch, torchaudio, bundle_name: str):
-    """Load and cache the acoustic model and token dictionary."""
-
-    device = str(_resolve_alignment_device(torch))
-    cache_key = (bundle_name, device)
-    if cache_key in _ALIGNMENT_MODEL_CACHE:
-        return _ALIGNMENT_MODEL_CACHE[cache_key]
-
-    try:
-        bundle = getattr(torchaudio.pipelines, bundle_name)
-    except AttributeError as exc:
-        raise RuntimeError(f"Unknown torchaudio alignment bundle: {bundle_name}") from exc
-
-    if not hasattr(bundle, "get_model") or not hasattr(bundle, "get_dict"):
-        raise RuntimeError(
-            f"Alignment bundle {bundle_name} does not expose model/dictionary helpers."
-        )
-
-    model = bundle.get_model().to(_resolve_alignment_device(torch)).eval()
-    token_dictionary = bundle.get_dict()
-    if "-" not in token_dictionary:
-        raise RuntimeError(
-            f"Alignment bundle {bundle_name} does not expose the blank token '-'."
-        )
-
-    resources = (bundle, model, token_dictionary)
-    _ALIGNMENT_MODEL_CACHE[cache_key] = resources
-    return resources
-
-
-def _build_story_token_map(story_text: str) -> list[StoryToken]:
-    """Map displayed story tokens to normalized alignment words."""
-
-    tokens: list[StoryToken] = []
-    for original_token in story_text.split():
-        normalized_words = _normalize_alignment_token(original_token)
-        if not normalized_words:
-            continue
-        tokens.append(
-            StoryToken(
-                original_text=original_token,
-                normalized_words=normalized_words,
-            )
-        )
-    return tokens
-
-
-def _normalize_alignment_token(text: str) -> list[str]:
-    """Normalize one display token into the upper-case words used by the ASR bundle."""
-
-    normalized = unicodedata.normalize("NFKC", text).upper()
-    normalized = normalized.translate(
-        str.maketrans(
-            {
-                "-": " ",
-                "/": " ",
-            }
-        )
+    manifest_path.write_text(
+        "".join(json.dumps(entry, ensure_ascii=False) + "\n" for entry in entries),
+        encoding="utf-8",
     )
-    normalized = re.sub(r"[^A-Z' ]+", " ", normalized)
-    normalized = re.sub(r"\s+", " ", normalized).strip()
-    return normalized.split() if normalized else []
+    debug_print(
+        "ALIGNMENT MANIFEST",
+        {
+            "manifest_path": str(manifest_path.resolve()),
+            "entries": entries,
+        },
+    )
 
 
-def _score_alignment(piece_spans: list[list[object]]) -> float:
-    """Compute a weighted average alignment confidence across merged token pieces."""
+def _run_nemo_forced_aligner(
+    manifest_path: Path,
+    output_dir: Path,
+    batch_size: int,
+) -> None:
+    """Run the official NeMo Forced Aligner tool against a manifest."""
 
-    weighted_score = 0.0
-    total_length = 0
-    for spans in piece_spans:
-        for span in spans:
-            span_length = len(span)
-            weighted_score += span.score * span_length
-            total_length += span_length
-    if total_length == 0:
-        raise RuntimeError("Forced alignment produced zero-length spans.")
-    return weighted_score / total_length
+    align_script = _resolve_nemo_align_script()
+    output_dir.mkdir(parents=True, exist_ok=True)
 
-
-def _unflatten(sequence: list[object], lengths: list[int]) -> list[list[object]]:
-    """Group a flat token-span list back into the original word boundaries."""
-
-    grouped: list[list[object]] = []
-    start = 0
-    for length in lengths:
-        end = start + length
-        grouped.append(sequence[start:end])
-        start = end
-    if start != len(sequence):
-        raise RuntimeError(
-            "Forced alignment returned token spans that did not match the expected "
-            f"target length: expected {sum(lengths)}, got {len(sequence)}."
+    command = [
+        sys.executable,
+        str(align_script),
+        f"pretrained_name={DEFAULT_NEMO_MODEL}",
+        f"manifest_filepath={manifest_path.resolve()}",
+        f"output_dir={output_dir.resolve()}",
+        "align_using_pred_text=False",
+        "transcribe_device=cpu",
+        "viterbi_device=cpu",
+        f"batch_size={max(batch_size, 1)}",
+        "save_output_file_formats=[ctm]",
+    ]
+    debug_print(
+        "ALIGNMENT REQUEST",
+        {
+            "script_path": str(align_script.resolve()),
+            "manifest_path": str(manifest_path.resolve()),
+            "output_dir": str(output_dir.resolve()),
+            "model": DEFAULT_NEMO_MODEL,
+            "batch_size": max(batch_size, 1),
+        },
+    )
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=align_script.parent,
+            check=True,
+            capture_output=True,
+            text=True,
         )
-    return grouped
+    except subprocess.CalledProcessError as exc:
+        raise RuntimeError(
+            "NeMo Forced Aligner failed. "
+            f"stdout:\n{exc.stdout}\n\nstderr:\n{exc.stderr}"
+        ) from exc
+
+    debug_print(
+        "ALIGNMENT TOOL OUTPUT",
+        {
+            "stdout": completed.stdout.strip(),
+            "stderr": completed.stderr.strip(),
+        },
+    )
+
+
+def _resolve_nemo_align_script() -> Path:
+    """Resolve the NeMo align.py tool path from environment or default Colab paths."""
+
+    candidates = []
+    if DEFAULT_NEMO_ALIGN_SCRIPT:
+        candidates.append(Path(DEFAULT_NEMO_ALIGN_SCRIPT))
+    candidates.append(DEFAULT_NEMO_REPO / "tools" / "nemo_forced_aligner" / "align.py")
+
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate
+
+    raise RuntimeError(
+        "NeMo Forced Aligner script was not found. "
+        "Clone the NeMo tools folder in Colab and set STORYAI_NEMO_ALIGN_SCRIPT "
+        "or STORYAI_NEMO_REPO before launching the app."
+    )
+
+
+def _read_nemo_output_manifest(manifest_path: Path, output_dir: Path) -> dict[str, dict]:
+    """Read the NeMo output manifest and index it by absolute audio path."""
+
+    output_manifest_path = output_dir / f"{manifest_path.stem}_with_output_file_paths.json"
+    if not output_manifest_path.exists():
+        raise RuntimeError(
+            "NeMo Forced Aligner did not create the expected output manifest: "
+            f"{output_manifest_path}"
+        )
+
+    indexed_results: dict[str, dict] = {}
+    with output_manifest_path.open("r", encoding="utf-8") as handle:
+        for line in handle:
+            if not line.strip():
+                continue
+            entry = json.loads(line)
+            audio_key = str(Path(entry["audio_filepath"]).resolve())
+            indexed_results[audio_key] = entry
+
+    debug_print(
+        "ALIGNMENT OUTPUT MANIFEST",
+        {
+            "output_manifest_path": str(output_manifest_path.resolve()),
+            "entries": indexed_results,
+        },
+    )
+    return indexed_results
+
+
+def _parse_word_ctm(word_ctm_path: Path) -> list[dict]:
+    """Parse one NeMo word-level CTM file into the app word-timestamp shape."""
+
+    if not word_ctm_path.exists():
+        raise RuntimeError(
+            "Expected NeMo word-level CTM file was not found: "
+            f"{word_ctm_path}"
+        )
+
+    words = []
+    with word_ctm_path.open("r", encoding="utf-8") as handle:
+        for raw_line in handle:
+            line = raw_line.strip()
+            if not line:
+                continue
+
+            fields = line.split()
+            if len(fields) < 5:
+                raise RuntimeError(
+                    f"Unexpected CTM line format in {word_ctm_path}: {line!r}"
+                )
+
+            start = float(fields[2])
+            duration = float(fields[3])
+            token = fields[4].replace("<space>", " ")
+            words.append(
+                {
+                    "word": token,
+                    "start": round(start, 3),
+                    "end": round(start + duration, 3),
+                    "duration": round(duration, 3),
+                    "source": DEFAULT_ALIGNMENT_ENGINE,
+                }
+            )
+
+    if not words:
+        raise RuntimeError(
+            "NeMo Forced Aligner produced an empty word-level CTM file: "
+            f"{word_ctm_path}"
+        )
+
+    debug_print(
+        "ALIGNMENT WORDS",
+        {
+            "word_ctm_path": str(word_ctm_path.resolve()),
+            "word_count": len(words),
+            "preview": words[:10],
+        },
+    )
+    return words

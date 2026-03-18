@@ -9,7 +9,7 @@ The current scaffold implements the agreed single-run demo workflow:
 - make one OpenAI call for a structured `StoryPackage`
 - generate 3 page images from the story package
 - generate 3 narration audio clips from the story parts
-- align the 3 narration clips to the exact story text with a local word aligner
+- align the 3 narration clips to the exact story text with NeMo Forced Aligner
 - render 3 page video clips with persistent word highlighting
 - concatenate the 3 clips into a final story video
 - save artifacts locally
@@ -24,42 +24,24 @@ Run the whole app from one Colab cell:
 ```python
 import os
 import shutil
-from importlib import metadata
 
 os.chdir("/content")
 shutil.rmtree("/content/storyai", ignore_errors=True)
+shutil.rmtree("/content/NeMo", ignore_errors=True)
 !git clone https://github.com/aksakalai/storyai.git /content/storyai
+!git clone --depth 1 --filter=blob:none --sparse https://github.com/NVIDIA/NeMo.git /content/NeMo
+!git -C /content/NeMo sparse-checkout set tools/nemo_forced_aligner
 os.chdir("/content/storyai")
 !apt-get update
-!apt-get install -y ffmpeg
+!apt-get install -y ffmpeg libsndfile1
 !pip install -U pip
-
-def version_or_none(package_name):
-    try:
-        return metadata.version(package_name)
-    except metadata.PackageNotFoundError:
-        return None
-
-torch_version = version_or_none("torch")
-torchaudio_version = version_or_none("torchaudio")
-needs_alignment_runtime = (
-    torch_version != "2.8.0" or torchaudio_version != "2.8.0"
-)
-
-print("torch:", torch_version)
-print("torchaudio:", torchaudio_version)
-print("install alignment runtime:", needs_alignment_runtime)
-
-if needs_alignment_runtime:
-    get_ipython().system(
-        "pip install --index-url https://download.pytorch.org/whl/cpu "
-        "torch==2.8.0 torchaudio==2.8.0"
-    )
-
 !pip install -r requirements.txt
+!pip install Cython packaging
+!pip install "nemo_toolkit[asr]>=2.5.0"
 
 os.environ["OPENAI_API_KEY"] = "PASTE_YOUR_KEY_HERE"
 os.environ["STORYAI_SHARE"] = "true"
+os.environ["STORYAI_NEMO_REPO"] = "/content/NeMo"
 
 # Image quality switch for non-coders:
 # - "default" = Default / budget-friendly mode
@@ -89,8 +71,8 @@ os.environ["STORYAI_IMAGE_MODE"] = "default"
 ```
 
 This keeps the repo clean while still letting you paste the API key directly into the Colab cell for private demo use.
-The first generation in a fresh Colab runtime will also download the local alignment model once, so that run will start more slowly than the next ones.
-The PyTorch install step checks the current versions first, then only installs the CPU-only wheels if the runtime is missing the compatible `2.8.0` pair.
+The first generation in a fresh Colab runtime will also download the NeMo acoustic model once, so that run will start more slowly than the next ones.
+The NeMo checkout uses sparse checkout so Colab only pulls the forced-aligner tool folder, not the whole repository contents.
 
 ### Simple quality switch
 
@@ -98,7 +80,7 @@ StoryAI now uses these fixed models:
 
 - story: `gpt-5.4`
 - narration: `gpt-4o-mini-tts`
-- timing: local forced alignment with `WAV2VEC2_ASR_BASE_960H`
+- timing: `NeMo Forced Aligner` with `stt_en_citrinet_256_gamma_0_25`
 
 The only simple switch is image generation:
 
@@ -151,6 +133,8 @@ Each run currently writes:
 - `page_1_audio.wav`
 - `page_2_audio.wav`
 - `page_3_audio.wav`
+- `nemo_alignment_manifest.jsonl`
+- `nemo_alignment/`
 - `page_1_timestamps.json`
 - `page_2_timestamps.json`
 - `page_3_timestamps.json`

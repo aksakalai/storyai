@@ -211,7 +211,7 @@ def launch_app() -> None:
     print(
         "Timing engine: "
         f"{model_config['timing_engine']} "
-        f"({model_config['alignment_bundle']})",
+        f"({model_config['alignment_model']})",
         flush=True,
     )
     print(f"Terminal debug logging: {DEBUG_ENABLED}", flush=True)
