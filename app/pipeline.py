@@ -1,6 +1,7 @@
 import json
 import os
 import shutil
+from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
@@ -26,6 +27,7 @@ from .video import concatenate_page_videos, render_page_video
 
 DEFAULT_RUNS_DIR = Path(os.getenv("STORYAI_RUNS_DIR", "runs"))
 MAX_IMAGE_SIZE = 1536
+ProgressCallback = Callable[[float, str], None]
 
 
 def _new_run_dir(base_dir: Path = DEFAULT_RUNS_DIR) -> Path:
@@ -46,13 +48,30 @@ def normalize_image(source_path: Path, output_path: Path) -> None:
         working.save(output_path, format="PNG")
 
 
-def run_story_package_pipeline(image_path: str, api_key: str | None = None) -> dict:
+def _report_progress(
+    progress_callback: ProgressCallback | None,
+    value: float,
+    description: str,
+) -> None:
+    """Report pipeline progress when a UI callback is available."""
+
+    if progress_callback is None:
+        return
+    progress_callback(value, description)
+
+
+def run_story_package_pipeline(
+    image_path: str,
+    api_key: str | None = None,
+    progress_callback: ProgressCallback | None = None,
+) -> dict:
     """Run the full story-to-video pipeline and save all generated artifacts."""
 
     source_path = Path(image_path)
     if not source_path.exists():
         raise FileNotFoundError(f"Uploaded image not found: {source_path}")
 
+    _report_progress(progress_callback, 0.02, "Preparing your drawing")
     run_dir = _new_run_dir()
     copied_input_path = run_dir / f"input_image{source_path.suffix.lower() or '.png'}"
     working_image_path = run_dir / "working_image.png"
@@ -68,20 +87,38 @@ def run_story_package_pipeline(image_path: str, api_key: str | None = None) -> d
     )
 
     shutil.copy2(source_path, copied_input_path)
+    _report_progress(progress_callback, 0.08, "Normalizing the drawing")
     normalize_image(copied_input_path, working_image_path)
     debug_print("COPIED INPUT IMAGE", summarize_image(copied_input_path))
     debug_print("NORMALIZED WORKING IMAGE", summarize_image(working_image_path))
 
     client = build_client(api_key=api_key)
+    _report_progress(progress_callback, 0.16, "Writing the story")
     story_package, raw_response = generate_story_package(client, working_image_path)
-    page_images = _generate_page_images(client, story_package, run_dir)
-    page_audio = _generate_page_audio(client, story_package, run_dir)
-    page_timestamps = _generate_page_timestamps(client, page_audio, run_dir)
+    page_images = _generate_page_images(
+        client,
+        story_package,
+        run_dir,
+        progress_callback=progress_callback,
+    )
+    page_audio = _generate_page_audio(
+        client,
+        story_package,
+        run_dir,
+        progress_callback=progress_callback,
+    )
+    page_timestamps = _generate_page_timestamps(
+        client,
+        page_audio,
+        run_dir,
+        progress_callback=progress_callback,
+    )
     page_videos, final_video_summary = _render_page_videos(
         page_images=page_images,
         page_audio=page_audio,
         page_timestamps=page_timestamps,
         run_dir=run_dir,
+        progress_callback=progress_callback,
     )
 
     story_package_path = run_dir / "story_package.json"
@@ -115,6 +152,7 @@ def run_story_package_pipeline(image_path: str, api_key: str | None = None) -> d
             "final_video_mp4": summarize_path(final_video_summary["video_path"]),
         },
     )
+    _report_progress(progress_callback, 1.0, "Story video ready")
 
     return {
         "run_dir": str(run_dir.resolve()),
@@ -144,7 +182,12 @@ def _write_json(output_path: Path, payload: StoryPackage | dict) -> None:
     )
 
 
-def _generate_page_images(client, story_package: StoryPackage, run_dir: Path) -> list[dict]:
+def _generate_page_images(
+    client,
+    story_package: StoryPackage,
+    run_dir: Path,
+    progress_callback: ProgressCallback | None = None,
+) -> list[dict]:
     """Generate one page image per story part and save prompt artifacts."""
 
     pages = [
@@ -154,7 +197,14 @@ def _generate_page_images(client, story_package: StoryPackage, run_dir: Path) ->
     ]
     generated_pages: list[dict] = []
 
-    for page_name, story_part in pages:
+    total_pages = len(pages)
+    for index, (page_name, story_part) in enumerate(pages, start=1):
+        progress_value = 0.24 + ((index - 1) / total_pages) * 0.18
+        _report_progress(
+            progress_callback,
+            progress_value,
+            f"Painting page {index} of {total_pages}",
+        )
         output_path = run_dir / f"{page_name}.png"
         prompt_path = run_dir / f"{page_name}_prompt.txt"
         final_prompt, response_summary = generate_page_image(
@@ -180,7 +230,12 @@ def _generate_page_images(client, story_package: StoryPackage, run_dir: Path) ->
     return generated_pages
 
 
-def _generate_page_audio(client, story_package: StoryPackage, run_dir: Path) -> list[dict]:
+def _generate_page_audio(
+    client,
+    story_package: StoryPackage,
+    run_dir: Path,
+    progress_callback: ProgressCallback | None = None,
+) -> list[dict]:
     """Generate one narration clip per story part and save audio artifacts."""
 
     pages = [
@@ -190,7 +245,14 @@ def _generate_page_audio(client, story_package: StoryPackage, run_dir: Path) -> 
     ]
     generated_audio: list[dict] = []
 
-    for page_name, story_part in pages:
+    total_pages = len(pages)
+    for index, (page_name, story_part) in enumerate(pages, start=1):
+        progress_value = 0.46 + ((index - 1) / total_pages) * 0.14
+        _report_progress(
+            progress_callback,
+            progress_value,
+            f"Recording narration {index} of {total_pages}",
+        )
         output_path = run_dir / f"{page_name}_audio.wav"
         response_summary = synthesize_narration(
             client=client,
@@ -210,12 +272,24 @@ def _generate_page_audio(client, story_package: StoryPackage, run_dir: Path) -> 
     return generated_audio
 
 
-def _generate_page_timestamps(client, page_audio: list[dict], run_dir: Path) -> list[dict]:
+def _generate_page_timestamps(
+    client,
+    page_audio: list[dict],
+    run_dir: Path,
+    progress_callback: ProgressCallback | None = None,
+) -> list[dict]:
     """Transcribe each narration clip and save page-level timing artifacts."""
 
     generated_timestamps: list[dict] = []
 
-    for page_audio_item in page_audio:
+    total_pages = len(page_audio)
+    for index, page_audio_item in enumerate(page_audio, start=1):
+        progress_value = 0.62 + ((index - 1) / total_pages) * 0.14
+        _report_progress(
+            progress_callback,
+            progress_value,
+            f"Timing the words for page {index} of {total_pages}",
+        )
         page_name = page_audio_item["page"]
         audio_path = Path(page_audio_item["audio_path"])
         output_path = run_dir / f"{page_name}_timestamps.json"
@@ -248,6 +322,7 @@ def _render_page_videos(
     page_audio: list[dict],
     page_timestamps: list[dict],
     run_dir: Path,
+    progress_callback: ProgressCallback | None = None,
 ) -> tuple[list[dict], dict]:
     """Render one page clip per story part, then concatenate the final video."""
 
@@ -257,7 +332,15 @@ def _render_page_videos(
     page_videos: list[dict] = []
     output_paths: list[Path] = []
 
-    for page_name in ("page_1", "page_2", "page_3"):
+    page_names = ("page_1", "page_2", "page_3")
+    total_pages = len(page_names)
+    for index, page_name in enumerate(page_names, start=1):
+        progress_value = 0.78 + ((index - 1) / total_pages) * 0.16
+        _report_progress(
+            progress_callback,
+            progress_value,
+            f"Rendering video page {index} of {total_pages}",
+        )
         image_item = image_by_page[page_name]
         audio_item = audio_by_page[page_name]
         timestamp_item = timestamps_by_page[page_name]
@@ -287,6 +370,7 @@ def _render_page_videos(
     debug_print("PAGE VIDEOS", page_videos)
 
     final_output_path = run_dir / "final_story.mp4"
+    _report_progress(progress_callback, 0.96, "Stitching the final story video")
     final_video_response = concatenate_page_videos(output_paths, final_output_path)
     final_video_summary = {
         "video_path": str(final_output_path.resolve()),

@@ -2,6 +2,11 @@
 
 StoryAI is a Colab-first Gradio app that turns one child drawing into a three-page bedtime story video with OpenAI.
 
+The interface has two modes:
+
+- Child Mode starts in a simple upload-first view and generates the story video automatically after an image is added.
+- Parent Mode exposes the full debugger-style page with the working image, prompts, narration, timestamps, and saved artifact paths.
+
 The app does one full run:
 
 - upload or capture one drawing

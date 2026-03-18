@@ -12,7 +12,23 @@ from .pipeline import DEFAULT_RUNS_DIR, run_story_package_pipeline
 RUN_LOCK = threading.Lock()
 
 
-def generate_story(image_path: str):
+def _report_gradio_progress(
+    progress: gr.Progress | None,
+    value: float,
+    description: str,
+) -> None:
+    """Update the Gradio progress bar when a run is active."""
+
+    if progress is None:
+        return
+    progress(value, desc=description)
+
+
+def _run_generation(
+    image_path: str,
+    progress: gr.Progress | None = None,
+    source: str = "ui",
+) -> dict:
     """Generate the full story, media, and rendered video outputs."""
 
     if not image_path:
@@ -26,13 +42,19 @@ def generate_story(image_path: str):
             "GRADIO EVENT",
             {
                 "input_image_path": image_path,
+                "source": source,
             },
         )
-        result = run_story_package_pipeline(image_path)
+        _report_gradio_progress(progress, 0.0, "Starting StoryAI")
+        result = run_story_package_pipeline(
+            image_path,
+            progress_callback=lambda value, description: _report_gradio_progress(
+                progress,
+                value,
+                description,
+            ),
+        )
         story = result["story_package"]
-        page_images = result["page_images"]
-        page_audio = result["page_audio"]
-        page_timestamps = result["page_timestamps"]
         debug_print(
             "GRADIO RESULT",
             {
@@ -48,36 +70,8 @@ def generate_story(image_path: str):
                 "final_video_path": result["final_video_path"],
             },
         )
-
-        return (
-            result["working_image"],
-            story.title,
-            story.visual_canon,
-            story.part_1.text,
-            story.part_1.image_prompt,
-            story.part_2.text,
-            story.part_2.image_prompt,
-            story.part_3.text,
-            story.part_3.image_prompt,
-            page_images[0]["image_path"],
-            page_images[0]["final_prompt"],
-            page_audio[0]["audio_path"],
-            page_timestamps[0]["text"],
-            page_timestamps[0]["words"],
-            page_images[1]["image_path"],
-            page_images[1]["final_prompt"],
-            page_audio[1]["audio_path"],
-            page_timestamps[1]["text"],
-            page_timestamps[1]["words"],
-            page_images[2]["image_path"],
-            page_images[2]["final_prompt"],
-            page_audio[2]["audio_path"],
-            page_timestamps[2]["text"],
-            page_timestamps[2]["words"],
-            story.model_dump(mode="json"),
-            result["final_video_path"],
-            f"Artifacts saved to {result['run_dir']}",
-        )
+        _report_gradio_progress(progress, 1.0, "Story video ready")
+        return result
     except Exception as exc:
         traceback.print_exc()
         raise gr.Error(str(exc)) from exc
@@ -85,104 +79,208 @@ def generate_story(image_path: str):
         RUN_LOCK.release()
 
 
+def _format_generation_outputs(result: dict) -> tuple:
+    """Format pipeline results for both the child and parent views."""
+
+    story = result["story_package"]
+    page_images = result["page_images"]
+    page_audio = result["page_audio"]
+    page_timestamps = result["page_timestamps"]
+    synced_image_path = result["input_image"]
+
+    return (
+        synced_image_path,
+        result["final_video_path"],
+        f'Your story "{story.title}" is ready.',
+        result["working_image"],
+        story.title,
+        story.visual_canon,
+        story.part_1.text,
+        story.part_1.image_prompt,
+        story.part_2.text,
+        story.part_2.image_prompt,
+        story.part_3.text,
+        story.part_3.image_prompt,
+        page_images[0]["image_path"],
+        page_images[0]["final_prompt"],
+        page_audio[0]["audio_path"],
+        page_timestamps[0]["text"],
+        page_timestamps[0]["words"],
+        page_images[1]["image_path"],
+        page_images[1]["final_prompt"],
+        page_audio[1]["audio_path"],
+        page_timestamps[1]["text"],
+        page_timestamps[1]["words"],
+        page_images[2]["image_path"],
+        page_images[2]["final_prompt"],
+        page_audio[2]["audio_path"],
+        page_timestamps[2]["text"],
+        page_timestamps[2]["words"],
+        story.model_dump(mode="json"),
+        result["final_video_path"],
+        f"Artifacts saved to {result['run_dir']}",
+    )
+
+
+def generate_story_from_child(
+    image_path: str,
+    progress: gr.Progress = gr.Progress(),
+):
+    """Auto-run the child flow after an upload and sync the parent inspector."""
+
+    return _format_generation_outputs(
+        _run_generation(image_path, progress=progress, source="child_mode")
+    )
+
+
+def generate_story_from_parent(
+    image_path: str,
+    progress: gr.Progress = gr.Progress(),
+):
+    """Run the parent/debug flow and sync the child-facing result view."""
+
+    return _format_generation_outputs(
+        _run_generation(image_path, progress=progress, source="parent_mode")
+    )
+
+
 def build_demo() -> gr.Blocks:
-    """Create the current StoryAI Gradio interface."""
+    """Create the StoryAI Gradio interface with child and parent modes."""
 
     with gr.Blocks(title="StoryAI") as demo:
         gr.Markdown(
             """
             # StoryAI
-            Upload or capture one child drawing, then generate a structured three-part bedtime story package, page images, narration, timestamps, and one final rendered story video.
+            Start in Child Mode for a simple upload-and-go story video. Switch to Parent Mode to inspect the working image, prompts, audio, timestamps, and full artifact trail.
             """
         )
 
-        with gr.Row():
-            image_input = gr.Image(
-                sources=["upload", "webcam"],
-                type="filepath",
-                label="Child drawing",
-            )
-            working_image = gr.Image(label="Normalized working image")
-
-        generate_button = gr.Button("Generate Story + Final Video", variant="primary")
-        status_output = gr.Textbox(label="Run status")
-
-        title_output = gr.Textbox(label="Title")
-        visual_canon_output = gr.Textbox(label="Visual canon", lines=3)
-
-        part_1_text = gr.Textbox(label="Part 1 text", lines=5)
-        part_1_prompt = gr.Textbox(label="Part 1 image prompt", lines=4)
-        part_2_text = gr.Textbox(label="Part 2 text", lines=5)
-        part_2_prompt = gr.Textbox(label="Part 2 image prompt", lines=4)
-        part_3_text = gr.Textbox(label="Part 3 text", lines=5)
-        part_3_prompt = gr.Textbox(label="Part 3 image prompt", lines=4)
-        story_json = gr.JSON(label="Story package JSON")
-
         with gr.Tabs():
-            with gr.Tab("Page 1"):
-                page_1_image = gr.Image(label="Page 1 image")
-                page_1_final_prompt = gr.Textbox(
-                    label="Page 1 final image generation prompt",
-                    lines=9,
+            with gr.Tab("Child Mode", render_children=True):
+                gr.Markdown(
+                    """
+                    Upload or capture one drawing and StoryAI will start right away. A progress bar will appear while the story video is being made.
+                    """
                 )
-                page_1_audio = gr.Audio(label="Page 1 narration")
-                page_1_transcript = gr.Textbox(label="Page 1 transcript", lines=5)
-                page_1_words = gr.JSON(label="Page 1 word timestamps")
-
-            with gr.Tab("Page 2"):
-                page_2_image = gr.Image(label="Page 2 image")
-                page_2_final_prompt = gr.Textbox(
-                    label="Page 2 final image generation prompt",
-                    lines=9,
+                child_image_input = gr.Image(
+                    sources=["upload", "webcam"],
+                    type="filepath",
+                    label="Child drawing",
                 )
-                page_2_audio = gr.Audio(label="Page 2 narration")
-                page_2_transcript = gr.Textbox(label="Page 2 transcript", lines=5)
-                page_2_words = gr.JSON(label="Page 2 word timestamps")
+                child_status = gr.Textbox(label="Story status", interactive=False)
+                child_final_video = gr.Video(label="Story video")
 
-            with gr.Tab("Page 3"):
-                page_3_image = gr.Image(label="Page 3 image")
-                page_3_final_prompt = gr.Textbox(
-                    label="Page 3 final image generation prompt",
-                    lines=9,
+            with gr.Tab("Parent Mode", render_children=True):
+                with gr.Row():
+                    parent_image_input = gr.Image(
+                        sources=["upload", "webcam"],
+                        type="filepath",
+                        label="Child drawing",
+                    )
+                    working_image = gr.Image(label="Normalized working image")
+
+                generate_button = gr.Button(
+                    "Generate Story + Final Video",
+                    variant="primary",
                 )
-                page_3_audio = gr.Audio(label="Page 3 narration")
-                page_3_transcript = gr.Textbox(label="Page 3 transcript", lines=5)
-                page_3_words = gr.JSON(label="Page 3 word timestamps")
+                status_output = gr.Textbox(label="Run status", interactive=False)
 
-        final_video = gr.Video(label="Final story video")
+                title_output = gr.Textbox(label="Title")
+                visual_canon_output = gr.Textbox(label="Visual canon", lines=3)
+
+                part_1_text = gr.Textbox(label="Part 1 text", lines=5)
+                part_1_prompt = gr.Textbox(label="Part 1 image prompt", lines=4)
+                part_2_text = gr.Textbox(label="Part 2 text", lines=5)
+                part_2_prompt = gr.Textbox(label="Part 2 image prompt", lines=4)
+                part_3_text = gr.Textbox(label="Part 3 text", lines=5)
+                part_3_prompt = gr.Textbox(label="Part 3 image prompt", lines=4)
+                story_json = gr.JSON(label="Story package JSON")
+
+                with gr.Tabs():
+                    with gr.Tab("Page 1"):
+                        page_1_image = gr.Image(label="Page 1 image")
+                        page_1_final_prompt = gr.Textbox(
+                            label="Page 1 final image generation prompt",
+                            lines=9,
+                        )
+                        page_1_audio = gr.Audio(label="Page 1 narration")
+                        page_1_transcript = gr.Textbox(
+                            label="Page 1 transcript",
+                            lines=5,
+                        )
+                        page_1_words = gr.JSON(label="Page 1 word timestamps")
+
+                    with gr.Tab("Page 2"):
+                        page_2_image = gr.Image(label="Page 2 image")
+                        page_2_final_prompt = gr.Textbox(
+                            label="Page 2 final image generation prompt",
+                            lines=9,
+                        )
+                        page_2_audio = gr.Audio(label="Page 2 narration")
+                        page_2_transcript = gr.Textbox(
+                            label="Page 2 transcript",
+                            lines=5,
+                        )
+                        page_2_words = gr.JSON(label="Page 2 word timestamps")
+
+                    with gr.Tab("Page 3"):
+                        page_3_image = gr.Image(label="Page 3 image")
+                        page_3_final_prompt = gr.Textbox(
+                            label="Page 3 final image generation prompt",
+                            lines=9,
+                        )
+                        page_3_audio = gr.Audio(label="Page 3 narration")
+                        page_3_transcript = gr.Textbox(
+                            label="Page 3 transcript",
+                            lines=5,
+                        )
+                        page_3_words = gr.JSON(label="Page 3 word timestamps")
+
+                final_video = gr.Video(label="Final story video")
+
+        shared_outputs = [
+            child_final_video,
+            child_status,
+            working_image,
+            title_output,
+            visual_canon_output,
+            part_1_text,
+            part_1_prompt,
+            part_2_text,
+            part_2_prompt,
+            part_3_text,
+            part_3_prompt,
+            page_1_image,
+            page_1_final_prompt,
+            page_1_audio,
+            page_1_transcript,
+            page_1_words,
+            page_2_image,
+            page_2_final_prompt,
+            page_2_audio,
+            page_2_transcript,
+            page_2_words,
+            page_3_image,
+            page_3_final_prompt,
+            page_3_audio,
+            page_3_transcript,
+            page_3_words,
+            story_json,
+            final_video,
+            status_output,
+        ]
+
+        child_image_input.input(
+            fn=generate_story_from_child,
+            inputs=[child_image_input],
+            outputs=[parent_image_input, *shared_outputs],
+            api_name=False,
+        )
 
         generate_button.click(
-            fn=generate_story,
-            inputs=[image_input],
-            outputs=[
-                working_image,
-                title_output,
-                visual_canon_output,
-                part_1_text,
-                part_1_prompt,
-                part_2_text,
-                part_2_prompt,
-                part_3_text,
-                part_3_prompt,
-                page_1_image,
-                page_1_final_prompt,
-                page_1_audio,
-                page_1_transcript,
-                page_1_words,
-                page_2_image,
-                page_2_final_prompt,
-                page_2_audio,
-                page_2_transcript,
-                page_2_words,
-                page_3_image,
-                page_3_final_prompt,
-                page_3_audio,
-                page_3_transcript,
-                page_3_words,
-                story_json,
-                final_video,
-                status_output,
-            ],
+            fn=generate_story_from_parent,
+            inputs=[parent_image_input],
+            outputs=[child_image_input, *shared_outputs],
             api_name=False,
         )
 
