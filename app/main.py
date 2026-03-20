@@ -12,8 +12,23 @@ from .pipeline import DEFAULT_RUNS_DIR, run_story_package_pipeline
 RUN_LOCK = threading.Lock()
 APP_CSS = """
 :root {
-    --storyai-copy-max-width: 760px;
-    --storyai-media-max-width: 720px;
+    --storyai-page-max-width: 1220px;
+    --storyai-copy-max-width: 780px;
+    --storyai-panel-max-width: 1120px;
+    --storyai-media-max-width: 640px;
+    --storyai-control-max-width: 720px;
+}
+
+.gradio-container {
+    background:
+        radial-gradient(circle at top, rgba(255, 141, 54, 0.10), transparent 32%),
+        linear-gradient(180deg, rgba(255, 249, 244, 0.96), rgba(255, 255, 255, 1) 18%);
+}
+
+#storyai-shell {
+    margin: 0 auto;
+    max-width: var(--storyai-page-max-width);
+    padding: 0.75rem 0 2.5rem;
 }
 
 #storyai-hero {
@@ -39,6 +54,22 @@ APP_CSS = """
     margin-top: 0.9rem;
 }
 
+#storyai-tabs [role="tablist"],
+.storyai-page-tabs [role="tablist"] {
+    justify-content: center;
+    gap: 0.5rem;
+}
+
+#storyai-tabs [role="tab"],
+.storyai-page-tabs [role="tab"] {
+    flex: 0 0 auto;
+}
+
+.storyai-mode-panel {
+    margin: 0 auto;
+    max-width: var(--storyai-panel-max-width);
+}
+
 .storyai-tab-copy {
     margin: 0 auto 1rem auto;
     max-width: var(--storyai-copy-max-width);
@@ -49,24 +80,60 @@ APP_CSS = """
     margin: 0;
 }
 
+.storyai-media-row {
+    justify-content: center;
+    gap: 1.5rem;
+}
+
 .storyai-media {
     margin-left: auto !important;
     margin-right: auto !important;
     max-width: var(--storyai-media-max-width);
-    width: min(100%, var(--storyai-media-max-width));
+    width: 100%;
 }
 
 .storyai-media img,
 .storyai-media video,
-.storyai-media canvas {
+.storyai-media canvas,
+.storyai-media .wrap,
+.storyai-media .empty-state,
+.storyai-media .image-container,
+.storyai-media .video-container {
     max-width: 100%;
+}
+
+.storyai-controls {
+    margin: 1.1rem auto 1.6rem auto;
+    max-width: var(--storyai-control-max-width);
+    gap: 0.8rem;
 }
 
 .storyai-action,
 .storyai-status {
     margin-left: auto !important;
     margin-right: auto !important;
-    max-width: var(--storyai-media-max-width);
+    max-width: var(--storyai-control-max-width);
+    width: 100%;
+}
+
+.storyai-action button {
+    border-radius: 999px !important;
+    box-shadow: 0 12px 30px rgba(255, 122, 26, 0.18) !important;
+}
+
+.storyai-status {
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    padding: 0 !important;
+}
+
+.storyai-status > .wrap,
+.storyai-status .wrap,
+.storyai-status .block {
+    margin-left: auto !important;
+    margin-right: auto !important;
+    width: 100% !important;
 }
 """
 
@@ -276,156 +343,160 @@ def build_demo() -> gr.Blocks:
     """Create the StoryAI Gradio interface with child and parent modes."""
 
     with gr.Blocks(title="StoryAI", css=APP_CSS) as demo:
-        gr.Markdown(
-            """
-            <div id="storyai-hero">
-              <h1>StoryAI</h1>
-              <p class="storyai-subtitle">Bedtime Story AI</p>
-              <p class="storyai-intro">
-                Start in Child Mode for a simple upload-and-go story video.
-                Switch to Parent Mode to inspect the working image, prompts,
-                audio, timestamps, and full artifact trail.
-              </p>
-            </div>
-            """,
-        )
+        with gr.Column(elem_id="storyai-shell"):
+            gr.HTML(
+                """
+                <div id="storyai-hero">
+                  <h1>StoryAI</h1>
+                  <p class="storyai-subtitle">Bedtime Story AI</p>
+                  <p class="storyai-intro">
+                    Start in Child Mode for a simple upload-and-go story video.
+                    Switch to Parent Mode to inspect the working image, prompts,
+                    audio, timestamps, and full artifact trail.
+                  </p>
+                </div>
+                """
+            )
 
-        with gr.Tabs():
-            with gr.Tab("Child Mode", render_children=True):
-                gr.Markdown(
-                    """
-                    <div class="storyai-tab-copy">
-                      <p>
-                        Upload or capture one drawing and StoryAI will start right away.
-                        A progress bar will appear while the story video is being made.
-                      </p>
-                    </div>
-                    """,
-                )
-                child_image_input = gr.Image(
-                    sources=["upload", "webcam"],
-                    type="filepath",
-                    label="Child drawing",
-                    elem_classes=["storyai-media"],
-                )
-                child_final_video = gr.Video(
-                    label="Story video",
-                    elem_classes=["storyai-media"],
-                )
-
-            with gr.Tab("Parent Mode", render_children=True):
-                gr.Markdown(
-                    """
-                    <div class="storyai-tab-copy">
-                      <p>
-                        Upload one drawing, then inspect the generated story,
-                        prompts, audio, timestamps, and final video in one place.
-                      </p>
-                    </div>
-                    """,
-                )
-                with gr.Row():
-                    parent_image_input = gr.Image(
-                        sources=["upload", "webcam"],
-                        type="filepath",
-                        label="Child drawing",
-                        elem_classes=["storyai-media"],
-                    )
-                    working_image = gr.Image(
-                        label="Normalized working image",
-                        elem_classes=["storyai-media"],
-                    )
-
-                generate_button = gr.Button(
-                    "Generate Story + Final Video",
-                    variant="primary",
-                    elem_classes=["storyai-action"],
-                )
-                status_output = gr.Textbox(
-                    label="Run status",
-                    interactive=False,
-                    elem_classes=["storyai-status"],
-                )
-
-                title_output = gr.Textbox(label="Title")
-                visual_canon_output = gr.Textbox(label="Visual canon", lines=3)
-
-                part_1_text = gr.Textbox(label="Part 1 text", lines=5)
-                part_1_prompt = gr.Textbox(label="Part 1 image prompt", lines=4)
-                part_2_text = gr.Textbox(label="Part 2 text", lines=5)
-                part_2_prompt = gr.Textbox(label="Part 2 image prompt", lines=4)
-                part_3_text = gr.Textbox(label="Part 3 text", lines=5)
-                part_3_prompt = gr.Textbox(label="Part 3 image prompt", lines=4)
-                story_json = gr.JSON(label="Story package JSON")
-
-                with gr.Tabs():
-                    with gr.Tab("Page 1"):
-                        page_1_image = gr.Image(
-                            label="Page 1 image",
+            with gr.Tabs(elem_id="storyai-tabs"):
+                with gr.Tab("Child Mode", render_children=True):
+                    with gr.Column(elem_classes=["storyai-mode-panel"]):
+                        gr.HTML(
+                            """
+                            <div class="storyai-tab-copy">
+                              <p>
+                                Upload or capture one drawing and StoryAI will start right away.
+                                A progress bar will appear while the story video is being made.
+                              </p>
+                            </div>
+                            """
+                        )
+                        child_image_input = gr.Image(
+                            sources=["upload", "webcam"],
+                            type="filepath",
+                            label="Child drawing",
                             elem_classes=["storyai-media"],
                         )
-                        page_1_final_prompt = gr.Textbox(
-                            label="Page 1 final image generation prompt",
-                            lines=9,
-                        )
-                        page_1_audio = gr.Audio(label="Page 1 narration")
-                        page_1_narration_text = gr.Textbox(
-                            label="Page 1 spoken narration text",
-                            lines=5,
-                        )
-                        page_1_transcript = gr.Textbox(
-                            label="Page 1 transcript",
-                            lines=5,
-                        )
-                        page_1_words = gr.JSON(label="Page 1 word timestamps")
-                        page_1_subtitle_mode = gr.Textbox(label="Page 1 subtitle mode")
-
-                    with gr.Tab("Page 2"):
-                        page_2_image = gr.Image(
-                            label="Page 2 image",
+                        child_final_video = gr.Video(
+                            label="Story video",
                             elem_classes=["storyai-media"],
                         )
-                        page_2_final_prompt = gr.Textbox(
-                            label="Page 2 final image generation prompt",
-                            lines=9,
-                        )
-                        page_2_audio = gr.Audio(label="Page 2 narration")
-                        page_2_narration_text = gr.Textbox(
-                            label="Page 2 spoken narration text",
-                            lines=5,
-                        )
-                        page_2_transcript = gr.Textbox(
-                            label="Page 2 transcript",
-                            lines=5,
-                        )
-                        page_2_words = gr.JSON(label="Page 2 word timestamps")
-                        page_2_subtitle_mode = gr.Textbox(label="Page 2 subtitle mode")
 
-                    with gr.Tab("Page 3"):
-                        page_3_image = gr.Image(
-                            label="Page 3 image",
+                with gr.Tab("Parent Mode", render_children=True):
+                    with gr.Column(elem_classes=["storyai-mode-panel"]):
+                        gr.HTML(
+                            """
+                            <div class="storyai-tab-copy">
+                              <p>
+                                Upload one drawing, then inspect the generated story,
+                                prompts, audio, timestamps, and final video in one place.
+                              </p>
+                            </div>
+                            """
+                        )
+                        with gr.Row(elem_classes=["storyai-media-row"], equal_height=True):
+                            parent_image_input = gr.Image(
+                                sources=["upload", "webcam"],
+                                type="filepath",
+                                label="Child drawing",
+                                elem_classes=["storyai-media"],
+                            )
+                            working_image = gr.Image(
+                                label="Normalized working image",
+                                elem_classes=["storyai-media"],
+                            )
+
+                        with gr.Column(elem_classes=["storyai-controls"]):
+                            generate_button = gr.Button(
+                                "Generate Story + Final Video",
+                                variant="primary",
+                                elem_classes=["storyai-action"],
+                            )
+                            status_output = gr.Textbox(
+                                label="Run status",
+                                interactive=False,
+                                elem_classes=["storyai-status"],
+                            )
+
+                        title_output = gr.Textbox(label="Title")
+                        visual_canon_output = gr.Textbox(label="Visual canon", lines=3)
+
+                        part_1_text = gr.Textbox(label="Part 1 text", lines=5)
+                        part_1_prompt = gr.Textbox(label="Part 1 image prompt", lines=4)
+                        part_2_text = gr.Textbox(label="Part 2 text", lines=5)
+                        part_2_prompt = gr.Textbox(label="Part 2 image prompt", lines=4)
+                        part_3_text = gr.Textbox(label="Part 3 text", lines=5)
+                        part_3_prompt = gr.Textbox(label="Part 3 image prompt", lines=4)
+                        story_json = gr.JSON(label="Story package JSON")
+
+                        with gr.Tabs(elem_classes=["storyai-page-tabs"]):
+                            with gr.Tab("Page 1"):
+                                page_1_image = gr.Image(
+                                    label="Page 1 image",
+                                    elem_classes=["storyai-media"],
+                                )
+                                page_1_final_prompt = gr.Textbox(
+                                    label="Page 1 final image generation prompt",
+                                    lines=9,
+                                )
+                                page_1_audio = gr.Audio(label="Page 1 narration")
+                                page_1_narration_text = gr.Textbox(
+                                    label="Page 1 spoken narration text",
+                                    lines=5,
+                                )
+                                page_1_transcript = gr.Textbox(
+                                    label="Page 1 transcript",
+                                    lines=5,
+                                )
+                                page_1_words = gr.JSON(label="Page 1 word timestamps")
+                                page_1_subtitle_mode = gr.Textbox(label="Page 1 subtitle mode")
+
+                            with gr.Tab("Page 2"):
+                                page_2_image = gr.Image(
+                                    label="Page 2 image",
+                                    elem_classes=["storyai-media"],
+                                )
+                                page_2_final_prompt = gr.Textbox(
+                                    label="Page 2 final image generation prompt",
+                                    lines=9,
+                                )
+                                page_2_audio = gr.Audio(label="Page 2 narration")
+                                page_2_narration_text = gr.Textbox(
+                                    label="Page 2 spoken narration text",
+                                    lines=5,
+                                )
+                                page_2_transcript = gr.Textbox(
+                                    label="Page 2 transcript",
+                                    lines=5,
+                                )
+                                page_2_words = gr.JSON(label="Page 2 word timestamps")
+                                page_2_subtitle_mode = gr.Textbox(label="Page 2 subtitle mode")
+
+                            with gr.Tab("Page 3"):
+                                page_3_image = gr.Image(
+                                    label="Page 3 image",
+                                    elem_classes=["storyai-media"],
+                                )
+                                page_3_final_prompt = gr.Textbox(
+                                    label="Page 3 final image generation prompt",
+                                    lines=9,
+                                )
+                                page_3_audio = gr.Audio(label="Page 3 narration")
+                                page_3_narration_text = gr.Textbox(
+                                    label="Page 3 spoken narration text",
+                                    lines=5,
+                                )
+                                page_3_transcript = gr.Textbox(
+                                    label="Page 3 transcript",
+                                    lines=5,
+                                )
+                                page_3_words = gr.JSON(label="Page 3 word timestamps")
+                                page_3_subtitle_mode = gr.Textbox(label="Page 3 subtitle mode")
+
+                        final_video = gr.Video(
+                            label="Final story video",
                             elem_classes=["storyai-media"],
                         )
-                        page_3_final_prompt = gr.Textbox(
-                            label="Page 3 final image generation prompt",
-                            lines=9,
-                        )
-                        page_3_audio = gr.Audio(label="Page 3 narration")
-                        page_3_narration_text = gr.Textbox(
-                            label="Page 3 spoken narration text",
-                            lines=5,
-                        )
-                        page_3_transcript = gr.Textbox(
-                            label="Page 3 transcript",
-                            lines=5,
-                        )
-                        page_3_words = gr.JSON(label="Page 3 word timestamps")
-                        page_3_subtitle_mode = gr.Textbox(label="Page 3 subtitle mode")
-
-                final_video = gr.Video(
-                    label="Final story video",
-                    elem_classes=["storyai-media"],
-                )
 
         shared_outputs = [
             child_final_video,
