@@ -1,6 +1,7 @@
 import json
 import os
 import shutil
+import wave
 from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import Path
@@ -13,6 +14,7 @@ from .debug_utils import (
     mask_api_key,
     summarize_image,
     summarize_path,
+    summarize_wav_audio,
 )
 from .openai_api import (
     build_client,
@@ -28,6 +30,7 @@ from .video import concatenate_page_videos, render_page_video
 
 DEFAULT_RUNS_DIR = Path(os.getenv("STORYAI_RUNS_DIR", "runs"))
 MAX_IMAGE_SIZE = 1536
+TITLE_PAUSE_SECONDS = 2.0
 ProgressCallback = Callable[[float, str], None]
 
 
@@ -59,6 +62,71 @@ def normalize_image(source_path: Path, output_path: Path) -> None:
         working = ImageOps.exif_transpose(image).convert("RGB")
         working.thumbnail((MAX_IMAGE_SIZE, MAX_IMAGE_SIZE))
         working.save(output_path, format="PNG")
+
+
+def _sanitize_for_narration(text: str) -> str:
+    """Normalize visible story text into narration-safe text."""
+
+    return sanitize_narration_text(text) or str(text or "").strip()
+
+
+def _build_page_one_narration(title_text: str, story_text: str) -> tuple[str, str, str]:
+    """Compose the first-page narration so the title is spoken before the story."""
+
+    clean_title = _sanitize_for_narration(title_text)
+    clean_story = _sanitize_for_narration(story_text)
+    if clean_title and clean_story:
+        separator = "" if clean_title.endswith((".", "!", "?")) else "."
+        full_narration = f"{clean_title}{separator} {clean_story}".strip()
+    else:
+        full_narration = clean_title or clean_story
+    return clean_title, clean_story, full_narration
+
+
+def _combine_wav_with_silence(
+    first_audio_path: Path,
+    second_audio_path: Path,
+    output_path: Path,
+    silence_seconds: float = TITLE_PAUSE_SECONDS,
+) -> dict:
+    """Concatenate two WAV files with a deterministic silent gap between them."""
+
+    with wave.open(str(first_audio_path), "rb") as first_audio, wave.open(
+        str(second_audio_path),
+        "rb",
+    ) as second_audio:
+        first_signature = (
+            first_audio.getnchannels(),
+            first_audio.getsampwidth(),
+            first_audio.getframerate(),
+            first_audio.getcomptype(),
+        )
+        second_signature = (
+            second_audio.getnchannels(),
+            second_audio.getsampwidth(),
+            second_audio.getframerate(),
+            second_audio.getcomptype(),
+        )
+        if first_signature != second_signature:
+            raise RuntimeError("Title and story narration WAV settings do not match.")
+
+        channels = first_audio.getnchannels()
+        sample_width = first_audio.getsampwidth()
+        frame_rate = first_audio.getframerate()
+        silence_frame_count = max(int(round(frame_rate * silence_seconds)), 0)
+        silence_bytes = b"\x00" * silence_frame_count * channels * sample_width
+
+        with wave.open(str(output_path), "wb") as combined_audio:
+            combined_audio.setnchannels(channels)
+            combined_audio.setsampwidth(sample_width)
+            combined_audio.setframerate(frame_rate)
+            combined_audio.writeframes(first_audio.readframes(first_audio.getnframes()))
+            combined_audio.writeframes(silence_bytes)
+            combined_audio.writeframes(second_audio.readframes(second_audio.getnframes()))
+
+    summary = summarize_wav_audio(output_path)
+    summary["pause_seconds"] = silence_seconds
+    return summary
 
 
 def _report_progress(
@@ -267,17 +335,53 @@ def _generate_page_audio(
             progress_value,
             f"Recording narration {index} of {total_pages}",
         )
-        narration_text = sanitize_narration_text(story_part.text) or story_part.text.strip()
         output_path = run_dir / f"{page_name}_audio.wav"
-        response_summary = synthesize_narration(
-            client=client,
-            text=narration_text,
-            output_path=output_path,
-        )
+        title_text: str | None = None
+        story_narration_text = _sanitize_for_narration(story_part.text)
+
+        if page_name == "page_1":
+            title_text, story_narration_text, narration_text = _build_page_one_narration(
+                story_package.title,
+                story_part.text,
+            )
+            title_audio_path = run_dir / "page_1_title_audio.wav"
+            story_audio_path = run_dir / "page_1_story_audio.wav"
+            title_response = synthesize_narration(
+                client=client,
+                text=title_text,
+                output_path=title_audio_path,
+            )
+            story_response = synthesize_narration(
+                client=client,
+                text=story_narration_text,
+                output_path=story_audio_path,
+            )
+            combined_audio = _combine_wav_with_silence(
+                first_audio_path=title_audio_path,
+                second_audio_path=story_audio_path,
+                output_path=output_path,
+            )
+            response_summary = {
+                "mode": "title_pause_story",
+                "pause_seconds": TITLE_PAUSE_SECONDS,
+                "title_audio": title_response,
+                "story_audio": story_response,
+                "output_audio": combined_audio,
+            }
+        else:
+            narration_text = story_narration_text
+            response_summary = synthesize_narration(
+                client=client,
+                text=narration_text,
+                output_path=output_path,
+            )
+
         generated_audio.append(
             {
                 "page": page_name,
+                "title_text": title_text,
                 "story_text": story_part.text,
+                "story_narration_text": story_narration_text,
                 "narration_text": narration_text,
                 "audio_path": str(output_path.resolve()),
                 "response": response_summary,
@@ -377,7 +481,8 @@ def _render_page_videos(
         render_summary = render_page_video(
             image_path=Path(image_item["image_path"]),
             audio_path=Path(audio_item["audio_path"]),
-            story_text=audio_item["narration_text"],
+            story_text=audio_item["story_narration_text"],
+            title_text=audio_item.get("title_text"),
             words=timestamp_item["words"],
             duration_seconds=float(timestamp_item["duration_seconds"] or audio_duration or 0.0),
             output_path=output_path,
@@ -385,6 +490,7 @@ def _render_page_videos(
         page_videos.append(
             {
                 "page": page_name,
+                "title_text": audio_item.get("title_text"),
                 "story_text": audio_item["story_text"],
                 "narration_text": audio_item["narration_text"],
                 "image_path": image_item["image_path"],

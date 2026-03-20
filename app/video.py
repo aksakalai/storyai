@@ -11,19 +11,20 @@ from .text_utils import normalize_alignment_token, sanitize_narration_text
 VIDEO_WIDTH = 1024
 VIDEO_HEIGHT = 1024
 VIDEO_FPS = 30
-CARD_X = 72
-CARD_WIDTH = 880
-CARD_BOTTOM_MARGIN = 64
-CARD_MIN_HEIGHT = 220
-CARD_MAX_HEIGHT = 420
-CARD_PADDING_X = 88
-CARD_PADDING_Y = 52
+CARD_X = 92
+CARD_WIDTH = 840
+CARD_BOTTOM_MARGIN = 40
+CARD_MIN_HEIGHT = 180
+CARD_MAX_HEIGHT = 360
+CARD_PADDING_X = 72
+CARD_PADDING_Y = 38
 CARD_TEXT_WIDTH = CARD_WIDTH - (CARD_PADDING_X * 2)
+CARD_TITLE_TEXT_WIDTH = CARD_WIDTH - 96
 FONT_NAME = os.getenv("STORYAI_SUBTITLE_FONT", "DejaVu Serif")
 DEFAULT_FONT_SIZE = int(os.getenv("STORYAI_SUBTITLE_FONT_SIZE", "34"))
 MIN_FONT_SIZE = int(os.getenv("STORYAI_MIN_SUBTITLE_FONT_SIZE", "22"))
 MIN_WORD_DURATION = float(os.getenv("STORYAI_MIN_WORD_DURATION", "0.12"))
-MAX_SUBTITLE_LINES = 6
+MAX_SUBTITLE_LINES = 7
 LINE_HEIGHT_RATIO = 1.35
 ASS_PAST_COLOR = "&HFFFFFF&"
 ASS_CURRENT_COLOR = "&H7BD7F5&"
@@ -69,6 +70,7 @@ def render_page_video(
     image_path: Path,
     audio_path: Path,
     story_text: str,
+    title_text: str | None,
     words: list[dict],
     duration_seconds: float,
     output_path: Path,
@@ -84,6 +86,7 @@ def render_page_video(
     subtitles_path = output_path.with_name(f"{output_path.stem}_subtitles.ass")
     subtitle_summary = write_highlighted_subtitles(
         story_text=story_text,
+        title_text=title_text,
         words=words,
         duration_seconds=duration_seconds,
         output_path=subtitles_path,
@@ -100,7 +103,7 @@ def render_page_video(
         f"[0:v]scale={VIDEO_WIDTH}:{VIDEO_HEIGHT}:force_original_aspect_ratio=decrease,"
         f"pad={VIDEO_WIDTH}:{VIDEO_HEIGHT}:(ow-iw)/2:(oh-ih)/2,"
         f"drawbox=x={CARD_X}:y={card_y}:w={CARD_WIDTH}:h={card_height}:"
-        f"color=black@0.45:t=fill,"
+        f"color=black@0.28:t=fill,"
         f"{subtitles_filter}[v]"
     )
 
@@ -109,6 +112,7 @@ def render_page_video(
         "audio_path": str(audio_path.resolve()),
         "subtitles_path": str(subtitles_path.resolve()),
         "output_path": str(output_path.resolve()),
+        "title_text": title_text,
         "story_text": story_text,
         "word_count": len(words),
         "duration_seconds": round(duration_seconds, 3),
@@ -256,25 +260,36 @@ def concatenate_page_videos(page_video_paths: list[Path], output_path: Path) -> 
 
 def write_highlighted_subtitles(
     story_text: str,
+    title_text: str | None,
     words: list[dict],
     duration_seconds: float,
     output_path: Path,
 ) -> dict:
     """Write an ASS subtitle file with persistent storybook highlighting."""
 
+    display_text, title_token_count = _compose_box_text(
+        title_text=title_text,
+        story_text=story_text,
+    )
     aligned_tokens, fallback_reason = _align_story_tokens(
-        story_text,
+        display_text,
         words,
         duration_seconds,
     )
     if aligned_tokens is None:
         subtitle_mode = "static_text_fallback"
-        aligned_tokens = _build_static_tokens(story_text, duration_seconds)
-        layout = _choose_subtitle_layout(aligned_tokens)
+        aligned_tokens = _build_static_tokens(display_text, duration_seconds)
+        layout = _choose_subtitle_layout(
+            aligned_tokens,
+            title_token_count=title_token_count,
+        )
         events = _build_static_subtitle_events(aligned_tokens, duration_seconds)
     else:
         subtitle_mode = "word_highlight"
-        layout = _choose_subtitle_layout(aligned_tokens)
+        layout = _choose_subtitle_layout(
+            aligned_tokens,
+            title_token_count=title_token_count,
+        )
         events = _build_subtitle_events(aligned_tokens, duration_seconds)
 
     script = _build_ass_script(
@@ -293,11 +308,26 @@ def write_highlighted_subtitles(
         "card_height": layout.card_height,
         "card_y": layout.card_y,
         "duration_seconds": round(duration_seconds, 3),
+        "title_text": title_text,
+        "title_token_count": title_token_count,
         "subtitle_mode": subtitle_mode,
         "fallback_reason": fallback_reason,
     }
     debug_print("SUBTITLE SCRIPT", response_summary)
     return response_summary
+
+
+def _compose_box_text(
+    title_text: str | None,
+    story_text: str,
+) -> tuple[str, int]:
+    """Combine optional title text with the page story for one shared subtitle box."""
+
+    title_display = sanitize_narration_text(title_text or "").strip()
+    story_display = sanitize_narration_text(story_text).strip()
+    title_token_count = len(_display_story_tokens(title_display))
+    combined_parts = [part for part in (title_display, story_display) if part]
+    return " ".join(combined_parts), title_token_count
 
 
 def _ensure_ffmpeg_installed() -> None:
@@ -416,7 +446,10 @@ def _fill_missing_timing_gaps(
             token.end = token.start
 
 
-def _choose_subtitle_layout(tokens: list[AlignedToken]) -> SubtitleLayout:
+def _choose_subtitle_layout(
+    tokens: list[AlignedToken],
+    title_token_count: int = 0,
+) -> SubtitleLayout:
     """Choose a conservative wrapping and font size that stays inside the card."""
 
     if not tokens:
@@ -443,7 +476,11 @@ def _choose_subtitle_layout(tokens: list[AlignedToken]) -> SubtitleLayout:
 
     best_layout: SubtitleLayout | None = None
     for font_size in candidate_sizes:
-        wrapped_lines = _wrap_tokens_for_font(tokens, font_size)
+        wrapped_lines = _build_wrapped_lines(
+            tokens=tokens,
+            font_size=font_size,
+            title_token_count=title_token_count,
+        )
         line_count = len(wrapped_lines)
         line_height = round(font_size * LINE_HEIGHT_RATIO)
         content_height = line_count * line_height
@@ -472,16 +509,56 @@ def _choose_subtitle_layout(tokens: list[AlignedToken]) -> SubtitleLayout:
     return best_layout
 
 
-def _wrap_tokens_for_font(tokens: list[AlignedToken], font_size: int) -> list[list[int]]:
+def _build_wrapped_lines(
+    tokens: list[AlignedToken],
+    font_size: int,
+    title_token_count: int = 0,
+) -> list[list[int]]:
+    """Build wrapped lines with an optional title section above the story text."""
+
+    title_indices = list(range(min(max(title_token_count, 0), len(tokens))))
+    story_indices = list(range(len(title_indices), len(tokens)))
+    wrapped_lines: list[list[int]] = []
+
+    if title_indices:
+        wrapped_lines.extend(
+            _wrap_tokens_for_font(
+                tokens=tokens,
+                font_size=font_size,
+                token_indices=title_indices,
+                max_text_width=CARD_TITLE_TEXT_WIDTH,
+            )
+        )
+    if story_indices:
+        wrapped_lines.extend(
+            _wrap_tokens_for_font(
+                tokens=tokens,
+                font_size=font_size,
+                token_indices=story_indices,
+                max_text_width=CARD_TEXT_WIDTH,
+            )
+        )
+
+    return wrapped_lines
+
+
+def _wrap_tokens_for_font(
+    tokens: list[AlignedToken],
+    font_size: int,
+    token_indices: list[int] | None = None,
+    max_text_width: int = CARD_TEXT_WIDTH,
+) -> list[list[int]]:
     """Greedily wrap tokens using a conservative estimated text width."""
 
     lines: list[list[int]] = []
     current_line: list[int] = []
     current_width_units = 0.0
-    max_width_units = (CARD_TEXT_WIDTH / font_size) * 0.88
+    max_width_units = (max_text_width / font_size) * 0.88
     space_width_units = _estimate_text_width_units(" ")
+    indices = token_indices or list(range(len(tokens)))
 
-    for index, token in enumerate(tokens):
+    for index in indices:
+        token = tokens[index]
         token_width_units = _estimate_text_width_units(token.text)
         projected_width = token_width_units
         if current_line:

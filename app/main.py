@@ -108,8 +108,7 @@ APP_CSS = """
     gap: 0.8rem;
 }
 
-.storyai-action,
-.storyai-status {
+.storyai-action {
     margin-left: auto !important;
     margin-right: auto !important;
     max-width: var(--storyai-control-max-width);
@@ -119,21 +118,6 @@ APP_CSS = """
 .storyai-action button {
     border-radius: 999px !important;
     box-shadow: 0 12px 30px rgba(255, 122, 26, 0.18) !important;
-}
-
-.storyai-status {
-    background: transparent !important;
-    border: none !important;
-    box-shadow: none !important;
-    padding: 0 !important;
-}
-
-.storyai-status > .wrap,
-.storyai-status .wrap,
-.storyai-status .block {
-    margin-left: auto !important;
-    margin-right: auto !important;
-    width: 100% !important;
 }
 """
 
@@ -260,13 +244,11 @@ def _format_generation_outputs(result: dict) -> tuple:
         _format_subtitle_status(page_videos[2]),
         story.model_dump(mode="json"),
         result["final_video_path"],
-        f"Artifacts saved to {result['run_dir']}",
     )
 
 
 def _empty_generation_outputs(
     synced_image_path: str,
-    run_status: str,
 ) -> tuple:
     """Clear the visible results before a new story run starts."""
 
@@ -305,7 +287,6 @@ def _empty_generation_outputs(
         "",
         {},
         None,
-        run_status,
     )
 
 
@@ -315,10 +296,7 @@ def generate_story_from_child(
 ):
     """Auto-run the child flow after an upload and sync the parent inspector."""
 
-    yield _empty_generation_outputs(
-        synced_image_path=image_path,
-        run_status="Preparing a new run...",
-    )
+    yield _empty_generation_outputs(synced_image_path=image_path)
     yield _format_generation_outputs(
         _run_generation(image_path, progress=progress, source="child_mode")
     )
@@ -330,10 +308,7 @@ def generate_story_from_parent(
 ):
     """Run the parent/debug flow and sync the child-facing result view."""
 
-    yield _empty_generation_outputs(
-        synced_image_path=image_path,
-        run_status="Preparing a new run...",
-    )
+    yield _empty_generation_outputs(synced_image_path=image_path)
     yield _format_generation_outputs(
         _run_generation(image_path, progress=progress, source="parent_mode")
     )
@@ -411,11 +386,6 @@ def build_demo() -> gr.Blocks:
                                 "Generate Story + Final Video",
                                 variant="primary",
                                 elem_classes=["storyai-action"],
-                            )
-                            status_output = gr.Textbox(
-                                label="Run status",
-                                interactive=False,
-                                elem_classes=["storyai-status"],
                             )
 
                         title_output = gr.Textbox(label="Title")
@@ -532,7 +502,6 @@ def build_demo() -> gr.Blocks:
             page_3_subtitle_mode,
             story_json,
             final_video,
-            status_output,
         ]
 
         child_image_input.upload(
